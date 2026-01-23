@@ -6,6 +6,13 @@ __pycache__/
 # C extensions
 *.so
 
+# Build Artifact
+app/data/index/    # vector index
+
+# Source documents 
+#  Put any real PDFs in a separate, ignored path (or provide only tiny sample docs).
+
+
 # Distribution / packaging
 .Python
 build/
