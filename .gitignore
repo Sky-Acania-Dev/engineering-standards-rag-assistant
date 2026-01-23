@@ -6,13 +6,6 @@ __pycache__/
 # C extensions
 *.so
 
-# Build Artifact
-app/data/index/    # vector index
-
-# Source documents 
-#  Put any real PDFs in a separate, ignored path (or provide only tiny sample docs).
-
-
 # Distribution / packaging
 .Python
 build/
@@ -212,3 +205,24 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Local env
+.env
+*.env
+
+# Data / indexes / results
+app/data/index/
+app/evaluation/results/
+*.sqlite
+*.db
+
+# PDFs / large corpora (keep out of repo)
+data/
+corpus/
+*.pdf
+*.docx
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
