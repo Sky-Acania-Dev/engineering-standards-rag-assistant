@@ -1,0 +1,94 @@
+engineering-standards-rag-assistant/
+├─ README.md
+├─ LICENSE
+├─ .gitignore
+├─ .env.example
+├─ pyproject.toml                 # or requirements.txt (pyproject preferred)
+├─ docker/
+│  ├─ Dockerfile
+│  └─ docker-compose.yml
+├─ docs/
+│  ├─ architecture.md
+│  ├─ risk_and_disclaimer.md
+│  ├─ ingestion.md
+│  └─ evaluation.md
+├─ app/
+│  ├─ main.py                     # FastAPI entry
+│  ├─ api/
+│  │  ├─ __init__.py
+│  │  ├─ routes/
+│  │  │  ├─ health.py
+│  │  │  ├─ query.py              # POST /query
+│  │  │  └─ admin.py              # optional: /metrics, /config, etc.
+│  │  ├─ schemas/
+│  │  │  ├─ query.py              # Pydantic request/response models
+│  │  │  └─ eval.py
+│  │  └─ dependencies.py          # DI wiring: config, stores, llm, etc.
+│  ├─ core/
+│  │  ├─ config.py                # settings + env parsing
+│  │  ├─ logging.py               # structlog/loguru setup
+│  │  ├─ tracing.py               # request ids / correlation ids
+│  │  ├─ errors.py                # typed exceptions
+│  │  └─ safety.py                # refusal rules, policy hooks
+│  ├─ orchestration/
+│  │  ├─ graph.py                 # LangGraph definition (nodes + edges)
+│  │  ├─ state.py                 # graph state schema
+│  │  ├─ nodes/
+│  │  │  ├─ plan_query.py         # optional if you do strategy selection
+│  │  │  ├─ retrieve.py
+│  │  │  ├─ synthesize.py
+│  │  │  ├─ validate.py           # grounding/faithfulness checks
+│  │  │  └─ budget.py             # token/latency gating node (optional)
+│  │  └─ policies/
+│  │     ├─ bounds.py             # max steps, max retrieval calls, etc.
+│  │     └─ routing.py            # retrieval strategy selection
+│  ├─ rag/
+│  │  ├─ chunking.py              # chunk rules
+│  │  ├─ retrieval/
+│  │  │  ├─ hybrid.py             # sparse+dense fuse
+│  │  │  ├─ rerank.py             # optional (or placeholder)
+│  │  │  └─ context_pack.py       # build the final context
+│  │  ├─ citations.py             # chunk-level citation formatting
+│  │  └─ prompts/
+│  │     ├─ system.md
+│  │     ├─ answer.md
+│  │     └─ validate.md
+│  ├─ llm/
+│  │  ├─ ollama_client.py         # local LLM wrapper
+│  │  ├─ models.py                # model interface/protocols
+│  │  └─ token_count.py           # budget estimation
+│  ├─ stores/
+│  │  ├─ faiss_store.py           # FAISS index read/write/search
+│  │  ├─ metadata_store.py        # sqlite/postgres or local jsonl
+│  │  └─ docstore.py              # raw docs pointers (no copyrighted dumping)
+│  ├─ ingestion/
+│  │  ├─ pipeline.py              # ingest entrypoint used by scripts
+│  │  ├─ parsers/
+│  │  │  ├─ pdf.py
+│  │  │  └─ html.py
+│  │  ├─ normalize.py
+│  │  └─ manifest.py              # doc id/version/source metadata
+│  ├─ evaluation/
+│  │  ├─ runner.py                # eval harness (CLI calls into here)
+│  │  ├─ suites/
+│  │  │  ├─ baseline.yaml
+│  │  │  └─ regression.yaml
+│  │  ├─ metrics/
+│  │  │  ├─ faithfulness.py
+│  │  │  ├─ context_relevance.py
+│  │  │  ├─ latency.py
+│  │  │  └─ cost.py
+│  │  └─ storage.py               # results storage (jsonl/sqlite)
+│  └─ data/                       # optional: only small sample docs / configs
+│     └─ sample_docs/
+├─ scripts/
+│  ├─ ingest.py                   # thin CLI wrappers -> app.ingestion.pipeline
+│  ├─ eval.py                     # thin CLI wrappers -> app.evaluation.runner
+│  └─ build_index.py              # optional explicit index build
+├─ tests/
+│  ├─ unit/
+│  ├─ integration/
+│  └─ fixtures/
+└─ tools/
+   ├─ dev_smoke.py                # quick local smoke checks
+   └─ lint.sh
