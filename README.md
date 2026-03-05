@@ -21,6 +21,13 @@ Production-style GenAI assistant for querying engineering and regulatory standar
 - Evaluation: automated runs with stored metrics and regression tracking
 - Ops: structured logging, request tracing, and basic cost controls
 
+## Tech Stack
+- Orchestration: LangGraph (bounded, deterministic agent graph)
+- Vector store: FAISS
+- Local inference: Ollama (configurable local LLM)
+- API: FastAPI (+ Docker for packaging)
+- Retrieval: hybrid search + reranking (configurable)
+
 ## Architecture (High-Level)
 1. **Ingest** documents → parse → normalize → chunk
 2. **Index** chunks → embeddings + metadata → vector store
@@ -36,6 +43,7 @@ See `docs/architecture.md` for details.
 ### Prerequisites
 - Python 3.11+
 - (Optional) Docker
+- Local Models (Ollama) 
 
 ### Local run
 1. Copy env template:
@@ -57,6 +65,9 @@ See `docs/architecture.md` for details.
 - Model, retrieval, and evaluation settings live in `app/core/config.py`
 
 ## Evaluation
+1. **Faithfulness (gating)**: answers must be supported by retrieved context; otherwise, refuse or request more context.
+2. **Context relevance**: retrieved chunks should be relevant to the query and cover the required sections.
+3. **Operational budgets**: enforce limits on token cost and latency to keep the system deployable.
 - Run:
   - `python scripts/eval.py --suite baseline`
 - Outputs:
