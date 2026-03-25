@@ -217,7 +217,9 @@ app/evaluation/results/
 *.db
 
 # PDFs / large corpora (keep out of repo)
-data/
+data/raw/
+data/processed/
+data/indexes/
 corpus/
 *.pdf
 *.docx
