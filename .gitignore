@@ -206,15 +206,18 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-# Local env
-.env
-*.env
 
 # Data / indexes / results
 app/data/index/
 app/evaluation/results/
 *.sqlite
 *.db
+*.faiss
+*.npy
+*.npz
+*.pkl
+*.joblib
+*.parquet
 
 # PDFs / large corpora (keep out of repo)
 data/raw/
@@ -224,7 +227,7 @@ corpus/
 *.pdf
 *.docx
 
-# OS / editor
+# OS / IDE
 .DS_Store
 .vscode/
 .idea/
