@@ -74,6 +74,24 @@ class Day2IngestionFlowTests(unittest.TestCase):
         self.assertIn("| value_1 | value_2 |", holder_text)
         self.assertIn("| value_3 | value_4 |", holder_text)
 
+    def test_chunking_treats_numbered_lists_as_single_protected_chunk(self) -> None:
+        prefix = " ".join(f"x{i}" for i in range(790))
+        numbered_list = "\n".join([
+            "1. first requirement",
+            "2. second requirement",
+            "3. third requirement",
+        ])
+        suffix = " ".join(f"y{i}" for i in range(60))
+        document = f"Section 7.1 Rules\n\n{prefix}\n\n{numbered_list}\n\n{suffix}"
+
+        chunks = chunk_document_by_section(document, chunk_size=800, overlap=150)
+
+        list_chunks = [chunk for chunk in chunks if "1. first requirement" in chunk.text]
+        self.assertEqual(len(list_chunks), 1)
+        self.assertIn("2. second requirement", list_chunks[0].text)
+        self.assertIn("3. third requirement", list_chunks[0].text)
+
+
 
 if __name__ == "__main__":
     unittest.main()
