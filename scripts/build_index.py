@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 from pathlib import Path
-from typing import Iterable
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -15,6 +13,7 @@ from app.ingestion.parsers.html import ingest_html_folder
 from app.ingestion.parsers.pdf import ingest_pdf_folder
 from app.ingestion.parsers.txt import ingest_txt_folder
 from app.ingestion.pipeline import IngestionDocument, ingest_documents
+from app.llm.embeddings import Embedder, HashingEmbedder, build_embedder
 from app.stores.docstore import JsonlChunkStore, StoredChunk
 from app.stores.faiss_store import FaissStore
 
@@ -25,27 +24,6 @@ def _normalize_text(text: str) -> str:
 
 def _stable_chunk_uid(doc_id: str, chunk_id: int) -> str:
     return f"{doc_id}:{chunk_id}"
-
-
-class HashingEmbedder:
-    """Dependency-free baseline embedding for local indexing workflows."""
-
-    def __init__(self, dimension: int = 256) -> None:
-        if dimension <= 0:
-            raise ValueError("dimension must be positive")
-        self.dimension = dimension
-
-    def embed_texts(self, texts: Iterable[str]) -> list[list[float]]:
-        return [self._embed_single(text) for text in texts]
-
-    def _embed_single(self, text: str) -> list[float]:
-        vector = [0.0 for _ in range(self.dimension)]
-        for token in text.split():
-            digest = hashlib.blake2b(token.encode("utf-8"), digest_size=8).digest()
-            bucket = int.from_bytes(digest[:4], "little") % self.dimension
-            sign = 1.0 if (digest[4] & 1) == 0 else -1.0
-            vector[bucket] += sign
-        return vector
 
 
 def _collect_documents(input_dir: str) -> list[IngestionDocument]:
@@ -71,7 +49,10 @@ def build_index(
     chunk_size: int = 800,
     overlap: int = 150,
     embedding_dimension: int = 256,
-) -> dict[str, int]:
+    embedder_type: str = "hash",
+    embedding_model: str | None = None,
+    embedder: Embedder | None = None,
+) -> dict[str, int | str]:
     documents = _collect_documents(input_dir)
     ingestion_results = ingest_documents(
         documents,
@@ -105,10 +86,15 @@ def build_index(
                 )
             )
 
-    embedder = HashingEmbedder(dimension=embedding_dimension)
-    vectors = embedder.embed_texts(chunk_texts)
+    resolved_embedder = embedder or build_embedder(
+        provider=embedder_type,
+        dimension=embedding_dimension,
+        model_name=embedding_model,
+    )
+    vectors = resolved_embedder.embed_texts(chunk_texts)
 
-    index_store = FaissStore(dimension=embedding_dimension)
+    vector_dimension = len(vectors[0]) if vectors else embedding_dimension
+    index_store = FaissStore(dimension=vector_dimension)
     index_store.add(chunk_ids, vectors)
 
     output_path = Path(output_dir)
@@ -120,10 +106,11 @@ def build_index(
     docstore.upsert_many(stored_chunks)
     docstore.save(output_path / "chunk_store.jsonl")
 
-    stats = {
+    stats: dict[str, int | str] = {
         "documents": len(ingestion_results),
         "chunks": len(chunk_ids),
-        "embedding_dimension": embedding_dimension,
+        "embedding_dimension": vector_dimension,
+        "embedder_type": embedder_type,
     }
     with (output_path / "index_manifest.json").open("w", encoding="utf-8") as file:
         json.dump(stats, file, indent=2)
@@ -138,6 +125,8 @@ def main() -> None:
     parser.add_argument("--chunk-size", type=int, default=800)
     parser.add_argument("--overlap", type=int, default=150)
     parser.add_argument("--embedding-dim", type=int, default=256)
+    parser.add_argument("--embedder", default="hash", help="Embedder provider (hash | sentence_transformer)")
+    parser.add_argument("--embedding-model", default=None, help="Optional model name for model-based embedders")
     args = parser.parse_args()
 
     stats = build_index(
@@ -146,6 +135,8 @@ def main() -> None:
         chunk_size=args.chunk_size,
         overlap=args.overlap,
         embedding_dimension=args.embedding_dim,
+        embedder_type=args.embedder,
+        embedding_model=args.embedding_model,
     )
     print(json.dumps(stats, indent=2))
 

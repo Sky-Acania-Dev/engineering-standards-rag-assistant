@@ -80,6 +80,7 @@ class BuildIndexTests(unittest.TestCase):
             self.assertEqual(1, stats["documents"])
             self.assertGreaterEqual(stats["chunks"], 1)
             self.assertEqual(32, stats["embedding_dimension"])
+            self.assertEqual("hash", stats["embedder_type"])
 
             self.assertTrue((output_dir / "chunk_index.json").exists())
             self.assertTrue((output_dir / "chunk_store.jsonl").exists())
