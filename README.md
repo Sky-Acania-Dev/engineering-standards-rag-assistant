@@ -38,6 +38,7 @@ Production-style GenAI assistant for querying engineering and regulatory standar
 7. **Measure** → evaluation records quality, latency, and cost
 
 See `docs/architecture.md` for details.
+See `docs/query_api.md` for request/response behavior of `POST /query` (including `mode` and `debug`).
 
 ## Quickstart
 ### Prerequisites
