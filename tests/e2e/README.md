@@ -36,13 +36,20 @@ Using `./temp/...` avoids accidentally writing to an OS-level temp directory (fo
 mkdir -p ./temp/e2e_slice_index
 
 python scripts/build_index.py \
-  --input /temp/my_pdfs \
+  --input ./temp/my_pdfs \
   --output ./temp/e2e_slice_index \
   --chunk-size 800 \
   --overlap 150 \
   --embedding-dim 256 \
   --embedder hash
 ```
+
+or
+
+```bash
+py scripts/build_index.py --input ./temp/my_pdfs --output ./temp/e2e_slice_index --chunk-size 800 --overlap 150 --embedding-dim 256 --embedder hash
+```
+
 
 **Success indicators**
 
