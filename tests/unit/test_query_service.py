@@ -42,7 +42,8 @@ class QueryServiceTests(unittest.TestCase):
             response = service.query(QueryRequest(question="Any requirement?", top_k=5))
 
             self.assertEqual(0, response.retrieved_chunks)
-            self.assertIn("could not find supporting evidence", response.answer)
+            self.assertIn("don't have enough reliable evidence", response.answer.lower())
+            self.assertEqual("insufficient_chunks", response.refusal_reason)
             self.assertEqual([], response.citations)
 
 
