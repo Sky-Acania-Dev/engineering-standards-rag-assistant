@@ -22,7 +22,7 @@ This is intended as a manual end-to-end smoke test you can run after unit tests 
 ### Preconditions
 
 - Python 3.11+ environment is ready.
-- Dependencies are installed.
+- Dependencies are installed (pypdf, uvicorn, etc...).
 - `/temp/my_pdfs` exists and contains only `14-TMCS.pdf`.
 
 ---
@@ -46,7 +46,7 @@ python scripts/build_index.py \
 
 or
 
-```bash
+```PowerShell
 py scripts/build_index.py --input ./temp/my_pdfs --output ./temp/e2e_slice_index --chunk-size 800 --overlap 150 --embedding-dim 256 --embedder hash
 ```
 
@@ -60,13 +60,13 @@ py scripts/build_index.py --input ./temp/my_pdfs --output ./temp/e2e_slice_index
 
 ---
 
-### 2) Start the API against this index
+### 2) Start the API server against this index
 
 Point the service to the fresh artifacts and launch FastAPI.
 
-```bash
-export INDEX_DIR=./temp/e2e_slice_index
-uvicorn app.main:app --reload --port 8000
+```PowerShell
+$env:INDEX_DIR = "./temp/e2e_slice_index"
+py -m uvicorn app.main:app --reload --port 8000
 ```
 
 **Success indicators**
@@ -76,12 +76,12 @@ uvicorn app.main:app --reload --port 8000
 
 ---
 
-### 3) Health check
+### 3) Health check as a client via curl
 
 In a second terminal:
 
-```bash
-curl -s http://127.0.0.1:8000/health
+```PowerShell
+Invoke-RestMethod http://127.0.0.1:8000/health
 ```
 
 **Expected output**
@@ -92,7 +92,7 @@ curl -s http://127.0.0.1:8000/health
 
 ---
 
-### 4) Positive query (extractive + debug)
+### 4) Positive query as a client (extractive + debug)
 
 Run a relevant query and inspect retrieval/citation/debug fields.
 
@@ -107,6 +107,23 @@ curl -s http://127.0.0.1:8000/query \
   }' | jq
 ```
 
+or
+
+```PowerShell
+$body = @{
+    question = "What are the key requirements described in this document?"
+    top_k = 5
+    mode = "extractive"
+    debug = $true
+} | ConvertTo-Json -Depth 5
+
+Invoke-RestMethod `
+    -Uri "http://127.0.0.1:8000/query" `
+    -Method Post `
+    -ContentType "application/json" `
+    -Body $body | ConvertTo-Json -Depth 10
+```
+
 **Success indicators**
 
 - `retrieved_chunks > 0`
@@ -116,7 +133,7 @@ curl -s http://127.0.0.1:8000/query \
 
 ---
 
-### 5) Negative query (refusal-path validation)
+### 5) Negative query as a client (refusal-path validation)
 
 Run an intentionally unrelated question.
 
@@ -129,6 +146,23 @@ curl -s http://127.0.0.1:8000/query \
     "mode": "extractive",
     "debug": true
   }' | jq
+```
+
+or
+
+```PowerShell
+$body = @{
+    question = "What is the population of Mars City in 2040?"
+    top_k = 5
+    mode = "extractive"
+    debug = $true
+} | ConvertTo-Json -Depth 5
+
+Invoke-RestMethod `
+    -Uri "http://127.0.0.1:8000/query" `
+    -Method Post `
+    -ContentType "application/json" `
+    -Body $body | ConvertTo-Json -Depth 10
 ```
 
 **Expected refusal indicators**
@@ -151,6 +185,22 @@ curl -s http://127.0.0.1:8000/query \
     "mode": "generative",
     "debug": true
   }' | jq
+```
+
+or
+
+```PowerShell
+$body = @{
+    question = "Summarize this document in plain language."
+    mode = "generative"
+    debug = $true
+} | ConvertTo-Json -Depth 5
+
+Invoke-RestMethod `
+    -Uri "http://127.0.0.1:8000/query" `
+    -Method Post `
+    -ContentType "application/json" `
+    -Body $body | ConvertTo-Json -Depth 10
 ```
 
 **What to confirm**
