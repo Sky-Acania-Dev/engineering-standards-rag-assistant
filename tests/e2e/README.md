@@ -29,14 +29,15 @@ This is intended as a manual end-to-end smoke test you can run after unit tests 
 
 ### 1) Build index artifacts from `/temp/my_pdfs`
 
-Create an output directory and build index artifacts (`chunk_index.json`, `chunk_store.jsonl`, `index_manifest.json`).
+Create a project-local output directory and build index artifacts (`chunk_index.json`, `chunk_store.jsonl`, `index_manifest.json`).
+Using `./temp/...` avoids accidentally writing to an OS-level temp directory (for example, `C:\temp` on Windows).
 
 ```bash
-mkdir -p /temp/e2e_slice_index
+mkdir -p ./temp/e2e_slice_index
 
 python scripts/build_index.py \
   --input /temp/my_pdfs \
-  --output /temp/e2e_slice_index \
+  --output ./temp/e2e_slice_index \
   --chunk-size 800 \
   --overlap 150 \
   --embedding-dim 256 \
@@ -46,9 +47,9 @@ python scripts/build_index.py \
 **Success indicators**
 
 - Command exits with code `0`.
-- `/temp/e2e_slice_index/chunk_index.json` exists.
-- `/temp/e2e_slice_index/chunk_store.jsonl` exists.
-- `/temp/e2e_slice_index/index_manifest.json` exists.
+- `./temp/e2e_slice_index/chunk_index.json` exists.
+- `./temp/e2e_slice_index/chunk_store.jsonl` exists.
+- `./temp/e2e_slice_index/index_manifest.json` exists.
 
 ---
 
@@ -57,7 +58,7 @@ python scripts/build_index.py \
 Point the service to the fresh artifacts and launch FastAPI.
 
 ```bash
-export INDEX_DIR=/temp/e2e_slice_index
+export INDEX_DIR=./temp/e2e_slice_index
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -157,7 +158,7 @@ curl -s http://127.0.0.1:8000/query \
 
 The vertical slice is considered validated when all of the following are true:
 
-1. Index artifacts are built successfully from `/temp/my_pdfs`.
+1. Index artifacts are built successfully from `/temp/my_pdfs` into `./temp/e2e_slice_index`.
 2. API starts and `GET /health` returns `{"status":"ok"}`.
 3. Positive query returns grounded answer with citations and no refusal.
 4. Negative query returns safe refusal with explicit reason.

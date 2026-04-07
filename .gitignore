@@ -228,6 +228,11 @@ corpus/
 *.pdf
 *.docx
 
+# Keep only temp/pdfs fixtures tracked (including PDFs)
+!temp/
+!temp/pdfs/
+!temp/pdfs/**
+
 # OS / IDE
 .DS_Store
 .vscode/
