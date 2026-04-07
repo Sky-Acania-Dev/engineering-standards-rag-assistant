@@ -105,12 +105,15 @@ class QueryService:
         sufficiency = self._evaluate_evidence(hits)
         if sufficiency["refusal_reason"] is not None:
             timings["total_ms"] = self._elapsed_ms(started_at)
-            debug_context = {
-                "timings_ms": timings,
-                "mode": request_mode,
-                "top_k": top_k,
-                "retrieval": sufficiency,
-            }
+            debug_context = self._build_debug_info(
+                mode=request_mode,
+                top_k=top_k,
+                timings=timings,
+                hits=hits,
+                sufficiency=sufficiency,
+                used_chunk_uids=[],
+                refusal_reason=str(sufficiency["refusal_reason"]),
+            )
             return self._refusal_response(
                 reason=str(sufficiency["refusal_reason"]),
                 debug=request_payload.debug,
@@ -129,19 +132,15 @@ class QueryService:
         confidence = self._compute_confidence(hits)
         response_debug = None
         if request_payload.debug:
-            response_debug = {
-                "mode": request_mode,
-                "top_k": top_k,
-                "timings_ms": timings,
-                "retrieval": {
-                    "hit_count": len(hits),
-                    "min_score_threshold": self._config.min_score,
-                    "min_chunks_threshold": self._config.min_chunks,
-                    "scores": [round(hit.score, 4) for hit in hits],
-                    "selected_chunk_uids": [hit.chunk.chunk_uid for hit in hits],
-                    "used_chunk_uids": used_chunk_uids,
-                },
-            }
+            response_debug = self._build_debug_info(
+                mode=request_mode,
+                top_k=top_k,
+                timings=timings,
+                hits=hits,
+                sufficiency=sufficiency,
+                used_chunk_uids=used_chunk_uids,
+                refusal_reason=None,
+            )
 
         citation_lookup = {citation.chunk_uid: citation for citation in citations}
         ordered_citations = [citation_lookup[uid] for uid in used_chunk_uids if uid in citation_lookup]
@@ -278,6 +277,49 @@ class QueryService:
         score_component = min(1.0, average_score)
         chunk_component = min(1.0, len(hits) / max(1, self._config.min_chunks * 2))
         return round((0.7 * score_component) + (0.3 * chunk_component), 3)
+
+    def _build_debug_info(
+        self,
+        *,
+        mode: str,
+        top_k: int,
+        timings: dict[str, float],
+        hits: list[RetrievalHit],
+        sufficiency: dict[str, object],
+        used_chunk_uids: list[str],
+        refusal_reason: str | None,
+    ) -> dict[str, object]:
+        return {
+            "mode": mode,
+            "top_k": top_k,
+            "timings_ms": timings,
+            "retrieval": {
+                "hit_count": len(hits),
+                "min_score_threshold": self._config.min_score,
+                "min_chunks_threshold": self._config.min_chunks,
+                "scores": [round(hit.score, 4) for hit in hits],
+                "selected_chunk_uids": [hit.chunk.chunk_uid for hit in hits],
+                "used_chunk_uids": used_chunk_uids,
+                "retrieved_documents": [
+                    {
+                        "chunk_uid": hit.chunk.chunk_uid,
+                        "doc_id": hit.chunk.doc_id,
+                        "title": hit.chunk.title,
+                        "section": hit.chunk.section,
+                        "chunk_id": hit.chunk.chunk_id,
+                        "page": hit.chunk.page,
+                        "score": round(hit.score, 4),
+                        "snippet": " ".join(hit.chunk.text.split())[:180],
+                    }
+                    for hit in hits
+                ],
+            },
+            "evidence_sufficiency": sufficiency,
+            "refusal_handling": {
+                "triggered": refusal_reason is not None,
+                "reason": refusal_reason,
+            },
+        }
 
     def _refusal_response(
         self,
