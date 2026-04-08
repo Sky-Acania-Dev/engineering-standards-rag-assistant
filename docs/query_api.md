@@ -69,7 +69,7 @@ The service refuses when retrieval evidence is insufficient. Refusals return:
 ## Runtime Configuration
 
 - Embedding: `EMBEDDER_PROVIDER`, `EMBEDDING_MODEL`
-- Query policy: `QUERY_DEFAULT_MODE`, `QUERY_MIN_SCORE`, `QUERY_MIN_CHUNKS`, `QUERY_TOP_K`
+- Query policy: `QUERY_DEFAULT_MODE`, `QUERY_MIN_SCORE`, `QUERY_MIN_SCORE_SENTENCE_TRANSFORMER`, `QUERY_MIN_CHUNKS`, `QUERY_TOP_K`
 - Generation provider: `QUERY_GENERATION_PROVIDER`, `QUERY_GENERATION_ENABLED`, `QUERY_GENERATION_MODEL`, `QUERY_GENERATION_ENDPOINT`, `QUERY_GENERATION_TIMEOUT_SECONDS`, `QUERY_GENERATION_TEMPERATURE`
 
 On startup, the API validates query embedding settings against `index_manifest.json` and fails fast on mismatch.

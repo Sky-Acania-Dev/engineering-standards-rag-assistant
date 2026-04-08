@@ -110,7 +110,10 @@ class QueryServiceTests(unittest.TestCase):
 
             service = QueryService.from_index_dir(
                 output_dir,
-                config=QueryServiceConfig(default_mode="generative", min_score=-1.0),
+                config=QueryServiceConfig(
+                    default_mode="generative",
+                    min_score_thresholds={"default": -1.0, "sentence_transformer": -1.0},
+                ),
                 generator=_FailingGenerator(),
             )
             response = service.query(QueryRequest(question="What is required?", mode="generative", debug=True))
@@ -132,7 +135,10 @@ class QueryServiceTests(unittest.TestCase):
 
             service = QueryService.from_index_dir(
                 output_dir,
-                config=QueryServiceConfig(default_mode="generative", min_score=-1.0),
+                config=QueryServiceConfig(
+                    default_mode="generative",
+                    min_score_thresholds={"default": -1.0, "sentence_transformer": -1.0},
+                ),
                 generator=_WorkingGenerator(),
             )
             response = service.query(QueryRequest(question="What requires labeling?", mode="generative", debug=True))
@@ -148,7 +154,7 @@ class QueryServiceTests(unittest.TestCase):
             artifacts=artifacts,
             embedder=_StubSentenceTransformerEmbedder(),
             generator=_WorkingGenerator(),
-            config=QueryServiceConfig(min_score=0.2, min_score_sentence_transformer=0.4),
+            config=QueryServiceConfig(min_score_thresholds={"default": 0.2, "sentence_transformer": 0.4}),
         )
 
         low_score_hit = RetrievalHit(

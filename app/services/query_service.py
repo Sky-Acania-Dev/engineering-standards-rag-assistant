@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 from pathlib import Path
 from time import perf_counter
@@ -30,8 +30,9 @@ class QueryArtifacts:
 @dataclass(frozen=True)
 class QueryServiceConfig:
     default_mode: Literal["extractive", "generative"] = "extractive"
-    min_score: float = 0.2
-    min_score_sentence_transformer: float = 0.4
+    min_score_thresholds: dict[str, float] = field(
+        default_factory=lambda: {"default": 0.2, "sentence_transformer": 0.4}
+    )
     min_chunks: int = 1
     retrieval_top_k: int = 5
     generation: GeneratorConfig = GeneratorConfig()
@@ -255,9 +256,11 @@ class QueryService:
         }
 
     def _effective_min_score(self) -> float:
-        if self._embedder.spec.provider == "sentence_transformer":
-            return max(self._config.min_score, self._config.min_score_sentence_transformer)
-        return self._config.min_score
+        provider = self._embedder.spec.provider
+        thresholds = self._config.min_score_thresholds
+        if provider in thresholds:
+            return thresholds[provider]
+        return thresholds.get("default", 0.2)
 
     def _build_generative_answer(
         self,
