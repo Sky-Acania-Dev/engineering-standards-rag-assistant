@@ -13,7 +13,7 @@ from app.ingestion.parsers.html import ingest_html_folder
 from app.ingestion.parsers.pdf import ingest_pdf_folder
 from app.ingestion.parsers.txt import ingest_txt_folder
 from app.ingestion.pipeline import IngestionDocument, ingest_documents
-from app.llm.embeddings import Embedder, HashingEmbedder, build_embedder
+from app.llm.embeddings import Embedder, build_embedder
 from app.stores.docstore import JsonlChunkStore, StoredChunk
 from app.stores.faiss_store import FaissStore
 
@@ -106,11 +106,12 @@ def build_index(
     docstore.upsert_many(stored_chunks)
     docstore.save(output_path / "chunk_store.jsonl")
 
-    stats: dict[str, int | str] = {
+    stats: dict[str, int | str | None] = {
         "documents": len(ingestion_results),
         "chunks": len(chunk_ids),
         "embedding_dimension": vector_dimension,
-        "embedder_type": embedder_type,
+        "embedder_provider": resolved_embedder.spec.provider,
+        "embedding_model": resolved_embedder.spec.model_name,
     }
     with (output_path / "index_manifest.json").open("w", encoding="utf-8") as file:
         json.dump(stats, file, indent=2)

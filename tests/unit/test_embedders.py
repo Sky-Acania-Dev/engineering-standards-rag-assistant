@@ -18,13 +18,13 @@ class EmbedderFactoryTests(unittest.TestCase):
     def test_factory_explicit_hash_embedder(self) -> None:
         embedder = build_embedder(provider="hash", dimension=64)
         self.assertIsInstance(embedder, HashingEmbedder)
-        self.assertEqual(64, embedder.dimension)
+        self.assertEqual(64, embedder.spec.dimension)
 
     def test_factory_from_config_hash_embedder(self) -> None:
         config = EmbedderConfig(provider="hash", dimension=32)
         embedder = build_embedder(config)
         self.assertIsInstance(embedder, HashingEmbedder)
-        self.assertEqual(32, embedder.dimension)
+        self.assertEqual(32, embedder.spec.dimension)
 
     def test_factory_unknown_provider_raises(self) -> None:
         with self.assertRaises(ValueError):

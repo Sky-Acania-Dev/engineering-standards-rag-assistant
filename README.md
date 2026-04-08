@@ -61,6 +61,19 @@ See `docs/query_api.md` for request/response behavior of `POST /query` (includin
 ### Docker run
 - `docker compose up --build`
 
+
+### Local semantic RAG options
+- Build index with semantic embeddings:
+  - `python scripts/build_index.py --input ./temp/my_pdfs --output ./temp/index --embedder sentence_transformer --embedding-model sentence-transformers/all-MiniLM-L6-v2`
+- Run API with matching embedder config:
+  - `export INDEX_DIR=./temp/index`
+  - `export EMBEDDER_PROVIDER=sentence_transformer`
+  - `export EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2`
+- Optional local generation via Ollama:
+  - `export QUERY_GENERATION_ENABLED=true`
+  - `export QUERY_GENERATION_PROVIDER=ollama`
+  - `export QUERY_GENERATION_MODEL=llama3.1`
+
 ## Configuration
 - Environment variables are documented in `.env.example`
 - Model, retrieval, and evaluation settings live in `app/core/config.py`
