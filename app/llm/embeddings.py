@@ -5,8 +5,19 @@ import hashlib
 from typing import Iterable, Protocol
 
 
+@dataclass(frozen=True)
+class EmbedderSpec:
+    provider: str
+    model_name: str | None
+    dimension: int
+
+
 class Embedder(Protocol):
     """Minimal embedder contract used by indexing and retrieval pipelines."""
+
+    @property
+    def spec(self) -> EmbedderSpec:
+        ...
 
     def embed_texts(self, texts: Iterable[str]) -> list[list[float]]:
         ...
@@ -16,7 +27,7 @@ class Embedder(Protocol):
 class EmbedderConfig:
     provider: str = "hash"
     dimension: int = 256
-    model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
+    model_name: str | None = None
 
 
 class HashingEmbedder:
@@ -26,6 +37,10 @@ class HashingEmbedder:
         if dimension <= 0:
             raise ValueError("dimension must be positive")
         self.dimension = dimension
+
+    @property
+    def spec(self) -> EmbedderSpec:
+        return EmbedderSpec(provider="hash", model_name=None, dimension=self.dimension)
 
     def embed_texts(self, texts: Iterable[str]) -> list[list[float]]:
         return [self._embed_single(text) for text in texts]
@@ -53,6 +68,15 @@ class SentenceTransformerEmbedder:
                 "Install it with `pip install sentence-transformers`."
             ) from exc
         self._model = SentenceTransformer(model_name)
+        self.dimension = int(self._model.get_sentence_embedding_dimension())
+
+    @property
+    def spec(self) -> EmbedderSpec:
+        return EmbedderSpec(
+            provider="sentence_transformer",
+            model_name=self.model_name,
+            dimension=self.dimension,
+        )
 
     def embed_texts(self, texts: Iterable[str]) -> list[list[float]]:
         text_list = list(texts)
@@ -81,7 +105,8 @@ def build_embedder(
         return HashingEmbedder(dimension=selected_dimension)
 
     if selected_provider == "sentence_transformer":
-        return SentenceTransformerEmbedder(model_name=selected_model)
+        model = selected_model or "sentence-transformers/all-MiniLM-L6-v2"
+        return SentenceTransformerEmbedder(model_name=model)
 
     raise ValueError(
         "Unknown embedder provider "

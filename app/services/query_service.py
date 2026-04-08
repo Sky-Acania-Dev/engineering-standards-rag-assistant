@@ -5,10 +5,16 @@ import json
 from pathlib import Path
 from time import perf_counter
 from typing import Literal
-from urllib import error, request
 
 from app.api.schemas.query import Citation, QueryRequest, QueryResponse
-from app.llm.embeddings import Embedder, build_embedder
+from app.llm.embeddings import Embedder, EmbedderConfig, build_embedder
+from app.llm.generation import (
+    ExtractiveGenerator,
+    GenerationRequest,
+    Generator,
+    GeneratorConfig,
+    build_generator,
+)
 from app.rag.retrieval.hybrid import RetrievalHit, retrieve_top_k
 from app.stores.docstore import JsonlChunkStore
 from app.stores.faiss_store import FaissStore
@@ -18,15 +24,7 @@ from app.stores.faiss_store import FaissStore
 class QueryArtifacts:
     index: FaissStore
     docstore: JsonlChunkStore
-
-
-@dataclass(frozen=True)
-class GenerationConfig:
-    enabled: bool = False
-    model: str | None = None
-    endpoint: str = "http://localhost:11434/api/generate"
-    timeout_seconds: float = 15.0
-    temperature: float = 0.0
+    manifest: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -35,7 +33,7 @@ class QueryServiceConfig:
     min_score: float = 0.2
     min_chunks: int = 1
     retrieval_top_k: int = 5
-    generation: GenerationConfig = GenerationConfig()
+    generation: GeneratorConfig = GeneratorConfig()
 
 
 class QueryService:
@@ -46,10 +44,12 @@ class QueryService:
         artifacts: QueryArtifacts,
         embedder: Embedder,
         *,
+        generator: Generator,
         config: QueryServiceConfig | None = None,
     ) -> None:
         self._artifacts = artifacts
         self._embedder = embedder
+        self._generator = generator
         self._config = config or QueryServiceConfig()
 
     @classmethod
@@ -60,20 +60,76 @@ class QueryService:
         embedder_provider: str = "hash",
         embedding_dimension: int | None = None,
         embedding_model: str | None = None,
+        generator: Generator | None = None,
         config: QueryServiceConfig | None = None,
     ) -> QueryService:
         artifact_dir = Path(index_dir)
         index_path = artifact_dir / "chunk_index.json"
         store_path = artifact_dir / "chunk_store.jsonl"
+        manifest_path = artifact_dir / "index_manifest.json"
 
         index = FaissStore.load(index_path)
         docstore = JsonlChunkStore.load(store_path)
+        manifest = cls._load_manifest(manifest_path, index.dimension)
+
+        resolved_provider = embedder_provider
+        manifest_provider = str(manifest["embedder_provider"])
+        if resolved_provider != manifest_provider:
+            raise ValueError(
+                "Index embedder provider mismatch: "
+                f"index uses '{manifest_provider}' but runtime requested '{resolved_provider}'."
+            )
+
+        resolved_model = embedding_model
+        manifest_model = manifest.get("embedding_model")
+        if manifest_model and resolved_model and manifest_model != resolved_model:
+            raise ValueError(
+                "Index embedding model mismatch: "
+                f"index uses '{manifest_model}' but runtime requested '{resolved_model}'."
+            )
+        if resolved_model is None and isinstance(manifest_model, str):
+            resolved_model = manifest_model
+
+        resolved_dimension = embedding_dimension if embedding_dimension is not None else int(manifest["embedding_dimension"])
+        if resolved_dimension != int(manifest["embedding_dimension"]):
+            raise ValueError(
+                "Index embedding dimension mismatch: "
+                f"index uses {manifest['embedding_dimension']} but runtime requested {resolved_dimension}."
+            )
+
         embedder = build_embedder(
-            provider=embedder_provider,
-            dimension=embedding_dimension or index.dimension,
-            model_name=embedding_model,
+            EmbedderConfig(provider=resolved_provider, dimension=resolved_dimension, model_name=resolved_model)
         )
-        return cls(QueryArtifacts(index=index, docstore=docstore), embedder, config=config)
+        if embedder.spec.dimension != int(manifest["embedding_dimension"]):
+            raise ValueError(
+                "Embedder runtime dimension mismatch: "
+                f"index uses {manifest['embedding_dimension']} but embedder produced {embedder.spec.dimension}."
+            )
+
+        resolved_generator = generator or build_generator((config or QueryServiceConfig()).generation)
+        return cls(
+            QueryArtifacts(index=index, docstore=docstore, manifest=manifest),
+            embedder,
+            generator=resolved_generator,
+            config=config,
+        )
+
+    @staticmethod
+    def _load_manifest(path: Path, index_dimension: int) -> dict[str, object]:
+        if not path.exists():
+            return {
+                "embedding_dimension": index_dimension,
+                "embedder_provider": "hash",
+                "embedding_model": None,
+            }
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        if "embedder_provider" not in manifest:
+            manifest["embedder_provider"] = manifest.get("embedder_type", "hash")
+        if "embedding_model" not in manifest:
+            manifest["embedding_model"] = None
+        if "embedding_dimension" not in manifest:
+            manifest["embedding_dimension"] = index_dimension
+        return manifest
 
     def query(self, request_payload: QueryRequest) -> QueryResponse:
         timings: dict[str, float] = {}
@@ -113,6 +169,9 @@ class QueryService:
                 sufficiency=sufficiency,
                 used_chunk_uids=[],
                 refusal_reason=str(sufficiency["refusal_reason"]),
+                generation_used=False,
+                fallback_used=False,
+                fallback_reason=None,
             )
             return self._refusal_response(
                 reason=str(sufficiency["refusal_reason"]),
@@ -123,9 +182,15 @@ class QueryService:
         citations = self._build_citations(hits)
         answer_start = perf_counter()
         if request_mode == "generative":
-            answer, used_chunk_uids = self._build_generative_answer(request_payload.question, hits)
+            answer, used_chunk_uids, generation_used, fallback_used, fallback_reason = self._build_generative_answer(
+                request_payload.question,
+                hits,
+            )
         else:
             answer, used_chunk_uids = self._build_extractive_answer(hits)
+            generation_used = False
+            fallback_used = False
+            fallback_reason = None
         timings["answer_ms"] = self._elapsed_ms(answer_start)
         timings["total_ms"] = self._elapsed_ms(started_at)
 
@@ -140,6 +205,9 @@ class QueryService:
                 sufficiency=sufficiency,
                 used_chunk_uids=used_chunk_uids,
                 refusal_reason=None,
+                generation_used=generation_used,
+                fallback_used=fallback_used,
+                fallback_reason=fallback_reason,
             )
 
         citation_lookup = {citation.chunk_uid: citation for citation in citations}
@@ -182,63 +250,39 @@ class QueryService:
             "refusal_reason": None,
         }
 
-    def _build_generative_answer(self, question: str, hits: list[RetrievalHit]) -> tuple[str, list[str]]:
+    def _build_generative_answer(
+        self,
+        question: str,
+        hits: list[RetrievalHit],
+    ) -> tuple[str, list[str], bool, bool, str | None]:
         usable_hits = hits[: min(5, len(hits))]
         used_chunk_uids = [hit.chunk.chunk_uid for hit in usable_hits]
 
-        if not self._config.generation.enabled or not self._config.generation.model:
-            fallback_answer, _ = self._build_extractive_answer(usable_hits)
-            return (
-                "Generative mode is unavailable because no model configuration is enabled. "
-                "Returning extractive evidence summary instead.\n"
-                f"{fallback_answer}",
-                used_chunk_uids,
-            )
-
         evidence_lines = [
-            f"[{idx}] {hit.chunk.text.strip()} (chunk_uid={hit.chunk.chunk_uid})"
+            f"[{idx}] {' '.join(hit.chunk.text.split())[:240]} (chunk_uid={hit.chunk.chunk_uid})"
             for idx, hit in enumerate(usable_hits, start=1)
         ]
-        evidence_block = "\n".join(evidence_lines)
-        prompt = (
-            "Answer the question using only the evidence snippets below. "
-            "If the evidence is not enough, explicitly say so.\n\n"
-            f"Question: {question}\n\n"
-            "Evidence:\n"
-            f"{evidence_block}\n\n"
-            "Return a concise answer and include references in the form [n]."
+
+        generation_result = self._generator.generate(
+            GenerationRequest(question=question, evidence_lines=evidence_lines)
         )
+        if generation_result.used_generator and generation_result.text:
+            return generation_result.text, used_chunk_uids, True, False, None
 
-        payload = {
-            "model": self._config.generation.model,
-            "prompt": prompt,
-            "stream": False,
-            "options": {"temperature": self._config.generation.temperature},
-        }
+        fallback_answer, _ = self._build_extractive_answer(usable_hits)
+        reason = generation_result.fallback_reason or "generator_unavailable"
+        if isinstance(self._generator, ExtractiveGenerator):
+            return fallback_answer, used_chunk_uids, False, True, "generator_disabled"
 
-        http_request = request.Request(
-            self._config.generation.endpoint,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
+        return (
+            "Generative answer was unavailable from the configured backend. "
+            "Returning extractive evidence summary instead.\n"
+            f"{fallback_answer}",
+            used_chunk_uids,
+            False,
+            True,
+            reason,
         )
-        try:
-            with request.urlopen(http_request, timeout=self._config.generation.timeout_seconds) as response:
-                body = json.loads(response.read().decode("utf-8"))
-                generated = str(body.get("response", "")).strip()
-        except (error.URLError, TimeoutError, json.JSONDecodeError, ValueError):
-            generated = ""
-
-        if not generated:
-            fallback_answer, _ = self._build_extractive_answer(usable_hits)
-            return (
-                "Generative answer failed to render from the configured model. "
-                "Returning extractive evidence summary instead.\n"
-                f"{fallback_answer}",
-                used_chunk_uids,
-            )
-
-        return generated, used_chunk_uids
 
     @staticmethod
     def _build_citations(hits: list[RetrievalHit]) -> list[Citation]:
@@ -288,6 +332,9 @@ class QueryService:
         sufficiency: dict[str, object],
         used_chunk_uids: list[str],
         refusal_reason: str | None,
+        generation_used: bool,
+        fallback_used: bool,
+        fallback_reason: str | None,
     ) -> dict[str, object]:
         return {
             "mode": mode,
@@ -314,7 +361,14 @@ class QueryService:
                     for hit in hits
                 ],
             },
+            "embedder": self._embedder.spec.__dict__,
             "evidence_sufficiency": sufficiency,
+            "generation": {
+                "provider": getattr(self._generator, "provider", "unknown"),
+                "used": generation_used,
+                "fallback_used": fallback_used,
+                "fallback_reason": fallback_reason,
+            },
             "refusal_handling": {
                 "triggered": refusal_reason is not None,
                 "reason": refusal_reason,
