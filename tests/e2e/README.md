@@ -112,6 +112,40 @@ Invoke-RestMethod `
 
 Expected: refusal reason set, citations empty, confidence 0.0.
 
+## Ollama local LLM setup (prerequisite for generative mode)
+
+If you want to run Step 5 (`mode=generative`), ensure a local Ollama model is installed and running.
+
+### Bash
+
+```bash
+# 1) Install Ollama from https://ollama.com/download (one-time)
+# 2) Start Ollama service/app (if not already running)
+ollama serve
+
+# 3) Pull a model (example)
+ollama pull llama3.1
+
+# 4) Quick sanity check
+ollama run llama3.1 "Respond with: Ollama ready"
+```
+
+### VS Code PowerShell
+
+```powershell
+# 1) Install Ollama from https://ollama.com/download (one-time)
+# 2) Start Ollama service/app (if not already running)
+ollama serve
+
+# 3) Pull a model (example)
+ollama pull llama3.1
+
+# 4) Quick sanity check
+ollama run llama3.1 "Respond with: Ollama ready"
+```
+
+If `ollama serve` is already managed by the desktop app/service on your machine, you can skip launching it manually and just verify the model is available with `ollama list`.
+
 ## 5) Generative mode with Ollama
 
 Start Ollama locally with your model (example `llama3.1`). Then run API with:
