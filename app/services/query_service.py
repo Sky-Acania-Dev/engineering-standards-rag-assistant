@@ -31,6 +31,7 @@ class QueryArtifacts:
 class QueryServiceConfig:
     default_mode: Literal["extractive", "generative"] = "extractive"
     min_score: float = 0.2
+    min_score_sentence_transformer: float = 0.4
     min_chunks: int = 1
     retrieval_top_k: int = 5
     generation: GeneratorConfig = GeneratorConfig()
@@ -237,18 +238,26 @@ class QueryService:
             }
 
         best_score = hits[0].score if hits else -1.0
-        if best_score < self._config.min_score:
+        effective_min_score = self._effective_min_score()
+        if best_score < effective_min_score:
             return {
                 "hit_count": len(hits),
                 "best_score": best_score,
                 "refusal_reason": "low_retrieval_score",
+                "effective_min_score": effective_min_score,
             }
 
         return {
             "hit_count": len(hits),
             "best_score": best_score,
             "refusal_reason": None,
+            "effective_min_score": effective_min_score,
         }
+
+    def _effective_min_score(self) -> float:
+        if self._embedder.spec.provider == "sentence_transformer":
+            return max(self._config.min_score, self._config.min_score_sentence_transformer)
+        return self._config.min_score
 
     def _build_generative_answer(
         self,
@@ -342,7 +351,7 @@ class QueryService:
             "timings_ms": timings,
             "retrieval": {
                 "hit_count": len(hits),
-                "min_score_threshold": self._config.min_score,
+                "min_score_threshold": self._effective_min_score(),
                 "min_chunks_threshold": self._config.min_chunks,
                 "scores": [round(hit.score, 4) for hit in hits],
                 "selected_chunk_uids": [hit.chunk.chunk_uid for hit in hits],
