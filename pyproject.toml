@@ -3,3 +3,8 @@ name = "engineering-standards-rag-assistant"
 version = "0.1.0"
 description = "Scaffolded RAG assistant"
 requires-python = ">=3.11"
+
+[project.optional-dependencies]
+semantic = [
+  "sentence-transformers>=2.7.0",
+]

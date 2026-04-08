@@ -50,7 +50,8 @@ See `docs/query_api.md` for request/response behavior of `POST /query` (includin
 1. Copy env template:
    - `cp .env.example .env`
 2. Create and activate venv, install deps:
-   - `pip install -r requirements.txt`
+   - `pip install -e .`
+   - For semantic embeddings in E2E flows: `pip install -e ".[semantic]"`
 3. Ingest sample docs (or your own):
    - `python scripts/ingest.py --input app/data/sample_docs`
 4. Start API:
@@ -63,6 +64,8 @@ See `docs/query_api.md` for request/response behavior of `POST /query` (includin
 
 
 ### Local semantic RAG options
+- Install semantic embedding dependency (one-time per venv):
+  - `pip install -e ".[semantic]"`
 - Build index with semantic embeddings:
   - `python scripts/build_index.py --input ./temp/my_pdfs --output ./temp/index --embedder sentence_transformer --embedding-model sentence-transformers/all-MiniLM-L6-v2`
 - Run API with matching embedder config:
