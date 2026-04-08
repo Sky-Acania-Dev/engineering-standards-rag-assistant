@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from app.ingestion.parsers.html import ingest_html_folder, parse_html_content
 from app.ingestion.parsers.pdf import parse_pdf_file
@@ -46,9 +47,14 @@ class HTMLParserTests(unittest.TestCase):
 
 class PDFParserTests(unittest.TestCase):
     def test_parse_pdf_file_missing_dependency_has_actionable_error(self) -> None:
-        # A non-PDF path is sufficient because dependency check happens before parsing.
-        with self.assertRaises(ImportError) as context:
-            parse_pdf_file("dummy.pdf")
+        with patch(
+            "app.ingestion.parsers.pdf._require_pypdf",
+            side_effect=ImportError(
+                "PDF ingestion requires 'pypdf'. Install it with `pip install pypdf`."
+            ),
+        ):
+            with self.assertRaises(ImportError) as context:
+                parse_pdf_file("dummy.pdf")
 
         self.assertIn("pip install pypdf", str(context.exception))
 

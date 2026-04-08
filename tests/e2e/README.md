@@ -1,5 +1,19 @@
 # E2E Vertical Slice Procedure (`14-TMCS.pdf`)
 
+## 0) Install semantic embedding dependency (required for sentence-transformer embedder)
+
+### Bash
+
+```bash
+python -m pip install sentence-transformers
+```
+
+### VS Code PowerShell
+
+```powershell
+py -m pip install sentence-transformers
+```
+
 ## 1) Build index with semantic embeddings
 
 ### Bash
