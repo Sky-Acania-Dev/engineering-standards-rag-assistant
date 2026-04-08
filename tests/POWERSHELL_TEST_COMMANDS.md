@@ -13,29 +13,29 @@ $env:PYTHONPATH = "."
 ## 1) Run all unit tests
 
 ```powershell
-python -m unittest discover -s tests/unit -p "test*.py"
+py -m unittest discover -s tests/unit -p "test*.py"
 ```
 
 ## 2) Run tests in a specific path (test_query_service here as an example)
 
 ```powershell
-python -m unittest tests.unit.test_query_service
+py -m unittest tests.unit.test_query_service
 ```
 
 You can also run a whole subfolder, for example:
 
 ```powershell
-python -m unittest discover -s tests/unit -p "test*.py"
+py -m unittest discover -s tests/unit -p "test*.py"
 ```
 
 ## 3) Run one specific test
 
 ```powershell
-python -m unittest tests.unit.test_query_service.QueryServiceTests.test_query_handles_empty_index
+py -m unittest tests.unit.test_query_service.QueryServiceTests.test_query_handles_empty_index
 ```
 
 ## Optional: run all tests in repo (unit + others)
 
 ```powershell
-python -m unittest discover
+py -m unittest discover
 ```
