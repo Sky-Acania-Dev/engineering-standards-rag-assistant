@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "engineering-standards-rag-assistant"
 version = "0.1.0"
@@ -8,3 +12,8 @@ requires-python = ">=3.11"
 semantic = [
   "sentence-transformers>=2.7.0",
 ]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+exclude = ["tests*", "data*", "temp*", "docker*", "docs*", "scripts*", "tools*"]

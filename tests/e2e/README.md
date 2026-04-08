@@ -5,13 +5,13 @@
 ### Bash
 
 ```bash
-python -m pip install -e ".[semantic]"
+python -m pip install sentence-transformers
 ```
 
 ### VS Code PowerShell
 
 ```powershell
-py -m pip install -e ".[semantic]"
+py -m pip install sentence-transformers
 ```
 
 ## 1) Build index with semantic embeddings
