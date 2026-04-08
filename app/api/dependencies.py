@@ -36,7 +36,10 @@ def get_dependencies() -> Dependencies:
 
     config = QueryServiceConfig(
         default_mode=default_mode,
-        min_score=float(os.getenv("QUERY_MIN_SCORE", "0.2")),
+        min_score_thresholds={
+            "default": float(os.getenv("QUERY_MIN_SCORE", "0.2")),
+            "sentence_transformer": float(os.getenv("QUERY_MIN_SCORE_SENTENCE_TRANSFORMER", "0.4")),
+        },
         min_chunks=max(1, int(os.getenv("QUERY_MIN_CHUNKS", "1"))),
         retrieval_top_k=max(1, int(os.getenv("QUERY_TOP_K", "5"))),
         generation=GeneratorConfig(

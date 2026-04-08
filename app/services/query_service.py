@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 from pathlib import Path
 from time import perf_counter
@@ -30,7 +30,9 @@ class QueryArtifacts:
 @dataclass(frozen=True)
 class QueryServiceConfig:
     default_mode: Literal["extractive", "generative"] = "extractive"
-    min_score: float = 0.2
+    min_score_thresholds: dict[str, float] = field(
+        default_factory=lambda: {"default": 0.2, "sentence_transformer": 0.4}
+    )
     min_chunks: int = 1
     retrieval_top_k: int = 5
     generation: GeneratorConfig = GeneratorConfig()
@@ -237,18 +239,28 @@ class QueryService:
             }
 
         best_score = hits[0].score if hits else -1.0
-        if best_score < self._config.min_score:
+        effective_min_score = self._effective_min_score()
+        if best_score < effective_min_score:
             return {
                 "hit_count": len(hits),
                 "best_score": best_score,
                 "refusal_reason": "low_retrieval_score",
+                "effective_min_score": effective_min_score,
             }
 
         return {
             "hit_count": len(hits),
             "best_score": best_score,
             "refusal_reason": None,
+            "effective_min_score": effective_min_score,
         }
+
+    def _effective_min_score(self) -> float:
+        provider = self._embedder.spec.provider
+        thresholds = self._config.min_score_thresholds
+        if provider in thresholds:
+            return thresholds[provider]
+        return thresholds.get("default", 0.2)
 
     def _build_generative_answer(
         self,
@@ -342,7 +354,7 @@ class QueryService:
             "timings_ms": timings,
             "retrieval": {
                 "hit_count": len(hits),
-                "min_score_threshold": self._config.min_score,
+                "min_score_threshold": self._effective_min_score(),
                 "min_chunks_threshold": self._config.min_chunks,
                 "scores": [round(hit.score, 4) for hit in hits],
                 "selected_chunk_uids": [hit.chunk.chunk_uid for hit in hits],

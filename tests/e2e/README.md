@@ -46,6 +46,8 @@ Confirm `chunk_index.json`, `chunk_store.jsonl`, and `index_manifest.json` are p
 
 ## 2) Start API (extractive baseline)
 
+Run this in **Terminal A** and keep it running for steps 3 and 4.
+
 ### Bash
 
 ```bash
@@ -69,6 +71,8 @@ py -m uvicorn app.main:app --reload --port 8000
 If embedder settings do not match manifest, startup should fail immediately with a clear mismatch error.
 
 ## 3) Positive extractive query
+
+Run this in **Terminal B** while Terminal A keeps the API server running.
 
 ### Bash
 
@@ -99,6 +103,8 @@ Expected: non-empty citations, no refusal, debug retrieval scores.
 
 ## 4) Negative query refusal
 
+Run this in **Terminal B** while Terminal A keeps the API server running.
+
 ### Bash
 
 ```bash
@@ -124,11 +130,13 @@ Invoke-RestMethod `
   -Body $body | ConvertTo-Json -Depth 10
 ```
 
-Expected: refusal reason set, citations empty, confidence 0.0.
+Expected: refusal reason set (`low_retrieval_score` or `insufficient_chunks`), citations empty, confidence 0.0.
+With `sentence_transformer`, the default refusal floor is stricter (`min_score_threshold` shows `0.4` in debug).
 
 ## Ollama local LLM setup (prerequisite for generative mode)
 
 If you want to run Step 5 (`mode=generative`), ensure a local Ollama model is installed and running.
+You can run Ollama in **Terminal C** (or as a background service/app), while Terminal A continues running the API server.
 
 ### Bash
 
@@ -162,7 +170,7 @@ If `ollama serve` is already managed by the desktop app/service on your machine,
 
 ## 5) Generative mode with Ollama
 
-Start Ollama locally with your model (example `llama3.1`). Then run API with:
+Start Ollama locally with your model (example `llama3.1`), then update env vars in **Terminal A** and restart the API there:
 
 ### Bash
 
@@ -185,6 +193,8 @@ $env:QUERY_GENERATION_ENDPOINT = "http://localhost:11434/api/generate"
 ```
 
 Then query:
+
+Run these query commands in **Terminal B** while Terminal A serves the API.
 
 ### Bash
 
