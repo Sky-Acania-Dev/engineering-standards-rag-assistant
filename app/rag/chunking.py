@@ -68,6 +68,11 @@ def _parse_image_ref(block: str) -> str | None:
     match = re.search(r"^\[IMAGE\]\s*(.+)$", block.strip(), flags=re.IGNORECASE)
     return match.group(1).strip() if match else None
 
+    for raw_block in raw_blocks:
+        lines = [_normalize_line_noise(line) for line in raw_block.splitlines()]
+        lines = [line for line in lines if line]
+        if not lines:
+            continue
 
 def _extract_numeric_id(prefix: str, text: str) -> str | None:
     pattern = rf"\b{re.escape(prefix)}\s*([A-Za-z0-9_.\-]+)"
@@ -111,6 +116,19 @@ def _serialize_table_block(block: str) -> tuple[str, str | None]:
 
     return "\n".join(rendered), caption
 
+        blocks.append(
+            _Block(
+                text=full_block,
+                content_type=content_type,
+                page=page,
+                section=section,
+                section_path=section_path,
+                table_id=table_id,
+                figure_id=figure_id,
+                figure_ref=figure_ref,
+                protected=protected,
+            )
+        )
 
 def _iter_structured_blocks(document_text: str) -> list[_Block]:
     raw_blocks = [b.strip() for b in document_text.split("\n\n") if b.strip()]
