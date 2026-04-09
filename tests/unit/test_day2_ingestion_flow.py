@@ -1,5 +1,6 @@
 import unittest
 
+from app.ingestion.normalize import normalize_ingested_text
 from app.ingestion.pipeline import IngestionDocument, ingest_documents
 from app.rag.chunking import chunk_document_by_section
 
@@ -118,6 +119,27 @@ Body text here.
         self.assertIn("2. second requirement", list_chunks[0].text)
         self.assertIn("3. third requirement", list_chunks[0].text)
 
+    def test_ingestion_keeps_image_only_pdf_pages_chunkable(self) -> None:
+        documents = [
+            IngestionDocument(
+                doc_id="scan.pdf",
+                title="scan.pdf",
+                raw_text="## Page 1\n\n[IMAGES] 2 embedded image(s)",
+            )
+        ]
+
+        results = ingest_documents(
+            documents,
+            parser=lambda t: t,
+            normalizer=normalize_ingested_text,
+            fail_fast=True,
+            chunk_size=80,
+            overlap=10,
+        )
+
+        self.assertEqual(1, len(results))
+        self.assertGreaterEqual(len(results[0].chunks), 1)
+        self.assertTrue(any("[IMAGES]" in chunk.text for chunk in results[0].chunks))
 
     def test_chunking_extracts_page_content_type_and_paths(self) -> None:
         document = """## Page 1

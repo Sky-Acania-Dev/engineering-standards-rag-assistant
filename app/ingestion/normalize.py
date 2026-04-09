@@ -15,8 +15,6 @@ def _is_probable_noise(line: str) -> bool:
         return True
     if re.match(r"^Page\s+\d+$", line, flags=re.IGNORECASE):
         return True
-    if line.startswith("[IMAGES]"):
-        return True
     return False
 
 
