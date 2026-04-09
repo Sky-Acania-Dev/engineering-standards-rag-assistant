@@ -15,8 +15,6 @@ def _is_probable_noise(line: str) -> bool:
         return True
     if re.match(r"^Page\s+\d+$", line, flags=re.IGNORECASE):
         return True
-    if line.startswith("[IMAGES]"):
-        return True
     return False
 
 
@@ -33,7 +31,7 @@ def normalize_ingested_text(text: str) -> str:
     repeated = {
         line
         for line, count in frequencies.items()
-        if count >= 3 and not line.startswith("#") and len(line.split()) <= 10
+        if count >= 3 and not line.startswith("#") and not line.startswith("[") and len(line.split()) <= 10
     }
 
     normalized: list[str] = []
