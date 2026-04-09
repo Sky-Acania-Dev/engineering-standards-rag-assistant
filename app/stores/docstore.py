@@ -14,6 +14,13 @@ class StoredChunk:
     section: str
     chunk_id: int
     page: int | None = None
+    content_type: str = "body_text"
+    section_path: tuple[str, ...] = ()
+    table_id: str | None = None
+    figure_id: str | None = None
+    figure_ref: str | None = None
+    prev_chunk_id: int | None = None
+    next_chunk_id: int | None = None
 
 
 class JsonlChunkStore:
@@ -39,8 +46,12 @@ class JsonlChunkStore:
         path = Path(output_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as file:
-            for chunk_uid in sorted(self._records.keys()):
-                file.write(json.dumps(asdict(self._records[chunk_uid]), ensure_ascii=False) + "\n")
+            ordered = sorted(
+                self._records.values(),
+                key=lambda r: (r.doc_id, r.chunk_id, r.chunk_uid),
+            )
+            for record in ordered:
+                file.write(json.dumps(asdict(record), ensure_ascii=False) + "\n")
 
     @classmethod
     def load(cls, input_path: str | Path) -> JsonlChunkStore:
@@ -54,6 +65,9 @@ class JsonlChunkStore:
                 if not line.strip():
                     continue
                 payload = json.loads(line)
+                section_path = payload.get("section_path")
+                if isinstance(section_path, list):
+                    payload["section_path"] = tuple(section_path)
                 store.upsert_many([StoredChunk(**payload)])
 
         return store
