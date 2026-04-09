@@ -43,8 +43,8 @@ def get_dependencies() -> Dependencies:
         min_chunks=max(1, int(os.getenv("QUERY_MIN_CHUNKS", "1"))),
         retrieval_top_k=max(1, int(os.getenv("QUERY_TOP_K", "5"))),
         generation=GeneratorConfig(
-            provider=os.getenv("QUERY_GENERATION_PROVIDER", "extractive"),
-            enabled=_read_bool("QUERY_GENERATION_ENABLED", False),
+            provider=os.getenv("QUERY_GENERATION_PROVIDER", "generative"),
+            enabled=_read_bool("QUERY_GENERATION_ENABLED", True),
             model=os.getenv("QUERY_GENERATION_MODEL"),
             endpoint=os.getenv("QUERY_GENERATION_ENDPOINT", "http://localhost:11434/api/generate"),
             timeout_seconds=float(os.getenv("QUERY_GENERATION_TIMEOUT_SECONDS", "15.0")),
