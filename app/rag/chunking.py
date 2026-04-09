@@ -68,6 +68,11 @@ def _parse_image_ref(block: str) -> str | None:
     match = re.search(r"^\[IMAGE\]\s*(.+)$", block.strip(), flags=re.IGNORECASE)
     return match.group(1).strip() if match else None
 
+    for raw_block in raw_blocks:
+        lines = [_normalize_line_noise(line) for line in raw_block.splitlines()]
+        lines = [line for line in lines if line]
+        if not lines:
+            continue
 
 def _extract_numeric_id(prefix: str, text: str) -> str | None:
     pattern = rf"\b{re.escape(prefix)}\s*([A-Za-z0-9_.\-]+)"
@@ -111,6 +116,19 @@ def _serialize_table_block(block: str) -> tuple[str, str | None]:
 
     return "\n".join(rendered), caption
 
+        blocks.append(
+            _Block(
+                text=full_block,
+                content_type=content_type,
+                page=page,
+                section=section,
+                section_path=section_path,
+                table_id=table_id,
+                figure_id=figure_id,
+                figure_ref=figure_ref,
+                protected=protected,
+            )
+        )
 
 def _iter_structured_blocks(document_text: str) -> list[_Block]:
     raw_blocks = [b.strip() for b in document_text.split("\n\n") if b.strip()]
@@ -126,34 +144,41 @@ def _iter_structured_blocks(document_text: str) -> list[_Block]:
         if not lines:
             continue
 
-        page_match = re.match(r"^##\s+Page\s+(\d+)\b", lines[0], flags=re.IGNORECASE)
-        if page_match and len(lines) == 1:
-            page = int(page_match.group(1))
-            continue
+        while lines:
+            page_match = re.match(r"^##\s+Page\s+(\d+)\b", lines[0], flags=re.IGNORECASE)
+            if page_match:
+                page = int(page_match.group(1))
+                lines.pop(0)
+                continue
 
-        heading_match = re.match(r"^(#{1,6})\s+(.+)$", lines[0])
-        chapter_match = re.match(r"^(Chapter\s+\d+.*|Section\s+[\w.\-]+.*)$", lines[0], flags=re.IGNORECASE)
-        if heading_match or chapter_match:
-            if heading_match:
-                level = len(heading_match.group(1))
-                heading_text = heading_match.group(2).strip()
-            else:
-                level = 2
-                heading_text = lines[0].strip()
-            while heading_stack and heading_stack[-1][0] >= level:
-                heading_stack.pop()
-            heading_stack.append((level, heading_text))
-            section = heading_text
-            blocks.append(
-                _Block(
-                    text=heading_text,
-                    content_type="section_header",
-                    page=page,
-                    section=section,
-                    section_path=tuple(title for _, title in heading_stack),
-                    protected=True,
+            heading_match = re.match(r"^(#{1,6})\s+(.+)$", lines[0])
+            chapter_match = re.match(r"^(Chapter\s+\d+.*|Section\s+[\w.\-]+.*)$", lines[0], flags=re.IGNORECASE)
+            if heading_match or chapter_match:
+                if heading_match:
+                    level = len(heading_match.group(1))
+                    heading_text = heading_match.group(2).strip()
+                else:
+                    level = 2
+                    heading_text = lines[0].strip()
+                while heading_stack and heading_stack[-1][0] >= level:
+                    heading_stack.pop()
+                heading_stack.append((level, heading_text))
+                section = heading_text
+                blocks.append(
+                    _Block(
+                        text=heading_text,
+                        content_type="section_header",
+                        page=page,
+                        section=section,
+                        section_path=tuple(title for _, title in heading_stack),
+                        protected=True,
+                    )
                 )
-            )
+                lines.pop(0)
+                continue
+            break
+
+        if not lines:
             continue
 
         full_block = "\n".join(lines)

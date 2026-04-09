@@ -169,6 +169,15 @@ Note: Keep spacing.
         self.assertTrue(any(c.section_path for c in body_chunks))
         self.assertTrue(any(c.prev_chunk_id is not None or c.next_chunk_id is not None for c in chunks))
 
+    def test_chunking_handles_page_marker_and_body_in_same_block(self) -> None:
+        document = "## Page 1\n# Inline Header\nThis line should survive.\nAnother line."
+
+        chunks = chunk_document_by_section(document, chunk_size=120, overlap=20)
+
+        self.assertGreaterEqual(len(chunks), 1)
+        self.assertTrue(any("This line should survive." in c.text for c in chunks))
+        self.assertTrue(all(c.page == 1 for c in chunks))
+
 
 if __name__ == "__main__":
     unittest.main()
