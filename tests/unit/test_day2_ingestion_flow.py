@@ -141,6 +141,32 @@ Body text here.
         self.assertGreaterEqual(len(results[0].chunks), 1)
         self.assertTrue(any("[IMAGES]" in chunk.text for chunk in results[0].chunks))
 
+    def test_ingestion_keeps_repeated_image_markers_across_pages(self) -> None:
+        documents = [
+            IngestionDocument(
+                doc_id="scan-multipage.pdf",
+                title="scan-multipage.pdf",
+                raw_text=(
+                    "## Page 1\n\n[IMAGES] 1 embedded image(s)\n\n"
+                    "## Page 2\n\n[IMAGES] 1 embedded image(s)\n\n"
+                    "## Page 3\n\n[IMAGES] 1 embedded image(s)"
+                ),
+            )
+        ]
+
+        results = ingest_documents(
+            documents,
+            parser=lambda t: t,
+            normalizer=normalize_ingested_text,
+            fail_fast=True,
+            chunk_size=80,
+            overlap=10,
+        )
+
+        self.assertEqual(1, len(results))
+        self.assertGreaterEqual(len(results[0].chunks), 1)
+        self.assertTrue(any("[IMAGES]" in chunk.text for chunk in results[0].chunks))
+
     def test_chunking_extracts_page_content_type_and_paths(self) -> None:
         document = """## Page 1
 
