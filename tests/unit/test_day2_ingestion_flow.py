@@ -264,6 +264,89 @@ Capitalized terms are defined by program rules.
         self.assertIn("Chapter 1: Administration and General Requirements", body_chunks[0].section_path)
         self.assertIn("1.1 Definitions", body_chunks[0].section_path)
 
+    def test_page_start_recomputes_across_pages_when_chunks_slide(self) -> None:
+        page1 = " ".join(f"p1_{i}" for i in range(12))
+        page2 = " ".join(f"p2_{i}" for i in range(12))
+        document = f"""## Page 1
+
+Chapter 1 Intro
+
+{page1}
+
+## Page 2
+
+{page2}
+"""
+
+        chunks = chunk_document_by_section(document, chunk_size=10, overlap=4)
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+
+        self.assertGreaterEqual(len(body_chunks), 3)
+        self.assertEqual(1, body_chunks[0].page_start)
+        self.assertEqual(2, body_chunks[-1].page_end)
+        self.assertTrue(any(chunk.page_start == 2 for chunk in body_chunks[1:]))
+
+    def test_section_metadata_changes_after_heading_change(self) -> None:
+        document = """## Page 1
+
+Chapter 1 First
+
+alpha beta gamma delta epsilon zeta eta theta iota kappa
+
+Chapter 2 Second
+
+lambda mu nu xi omicron pi rho sigma tau upsilon
+"""
+
+        chunks = chunk_document_by_section(document, chunk_size=8, overlap=2)
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+
+        self.assertTrue(any(chunk.section == "Chapter 1 First" for chunk in body_chunks))
+        self.assertTrue(any(chunk.section == "Chapter 2 Second" for chunk in body_chunks))
+        self.assertTrue(any("Chapter 2 Second" in chunk.section_path for chunk in body_chunks))
+
+    def test_overlap_preserved_without_cross_section_metadata_leak(self) -> None:
+        sec1 = " ".join(f"s1_{i}" for i in range(16))
+        sec2 = " ".join(f"s2_{i}" for i in range(16))
+        document = f"""## Page 1
+
+Chapter 1 First
+
+{sec1}
+
+## Page 2
+
+Chapter 2 Second
+
+{sec2}
+"""
+
+        chunks = chunk_document_by_section(document, chunk_size=10, overlap=4)
+        sec1_chunks = [chunk for chunk in chunks if chunk.section == "Chapter 1 First" and chunk.content_type == "body_text"]
+        sec2_chunks = [chunk for chunk in chunks if chunk.section == "Chapter 2 Second" and chunk.content_type == "body_text"]
+
+        self.assertGreaterEqual(len(sec1_chunks), 2)
+        self.assertGreaterEqual(len(sec2_chunks), 2)
+        self.assertEqual(sec1_chunks[0].text.split()[-4:], sec1_chunks[1].text.split()[:4])
+        self.assertEqual(sec2_chunks[0].text.split()[-4:], sec2_chunks[1].text.split()[:4])
+        self.assertTrue(all(not token.startswith("s1_") for token in sec2_chunks[0].text.split()))
+
+    def test_image_marker_with_running_text_is_not_misclassified_as_artifact(self) -> None:
+        document = """## Page 1
+
+Chapter 1 Intro
+
+This paragraph has substantial running text and ends with [IMAGES] 2 embedded image(s)
+but it should still be handled as body text.
+"""
+
+        chunks = chunk_document_by_section(document, chunk_size=80, overlap=10)
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+        artifact_chunks = [chunk for chunk in chunks if chunk.content_type == "image_artifact"]
+
+        self.assertGreaterEqual(len(body_chunks), 1)
+        self.assertEqual([], artifact_chunks)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -114,8 +114,8 @@ def build_index(
 
     stats: dict[str, int | str | None] = {
         "documents": len(ingestion_results),
-        "chunks": len(chunk_ids),
-        "stored_chunks": len(stored_chunks),
+        "chunks": len(stored_chunks),
+        "embedded_chunks": len(chunk_ids),
         "embedding_dimension": vector_dimension,
         "embedder_provider": resolved_embedder.spec.provider,
         "embedding_model": resolved_embedder.spec.model_name,

@@ -37,6 +37,14 @@ class _Block:
     protected: bool = False
 
 
+@dataclass(frozen=True)
+class _BufferToken:
+    token: str
+    page: int | None
+    section: str
+    section_path: tuple[str, ...]
+
+
 def _tokenize(text: str) -> list[str]:
     return text.split()
 
@@ -146,7 +154,14 @@ def _detect_structural_heading(line: str) -> tuple[int, str] | None:
 
 def _is_image_artifact_block(text: str) -> bool:
     compact = " ".join(text.split())
-    return bool(re.search(r"\[IMAGES?\]\s+\d+\s+embedded\s+image\(s\)", compact, flags=re.IGNORECASE))
+    marker = r"\[IMAGES?\]\s+\d+\s+embedded\s+image\(s\)"
+    if not re.search(marker, compact, flags=re.IGNORECASE):
+        return False
+    # Cover/image placeholder artifacts are usually very short title + marker text.
+    # Avoid classifying regular running text that merely mentions an image marker.
+    return len(compact.split()) <= 24 and bool(
+        re.fullmatch(rf"(?:.+\s+)?{marker}", compact, flags=re.IGNORECASE)
+    )
 
 
 def _iter_structured_blocks(document_text: str) -> list[_Block]:
@@ -316,37 +331,54 @@ def chunk_document_by_section(
     blocks = _iter_structured_blocks(document_text)
     chunks: list[TextChunk] = []
     chunk_id = 0
-    buffer_tokens: list[str] = []
-    buffer_page_start: int | None = None
-    buffer_page_end: int | None = None
-    buffer_section = "Section 1"
-    buffer_section_path: tuple[str, ...] = ()
+    buffer_tokens: list[_BufferToken] = []
 
-    def flush_buffer() -> None:
-        nonlocal chunk_id, buffer_tokens
-        if not buffer_tokens:
+    def _emit_chunk_from_tokens(tokens: list[_BufferToken]) -> None:
+        nonlocal chunk_id
+        if not tokens:
             return
+        first = tokens[0]
+        last = tokens[-1]
         chunks.append(
             TextChunk(
                 chunk_id=chunk_id,
-                section=buffer_section,
-                text=" ".join(buffer_tokens),
-                token_count=len(buffer_tokens),
-                page_start=buffer_page_start,
-                page_end=buffer_page_end,
+                section=first.section,
+                text=" ".join(token.token for token in tokens),
+                token_count=len(tokens),
+                page_start=first.page,
+                page_end=last.page,
                 content_type="body_text",
-                section_path=buffer_section_path,
+                section_path=first.section_path,
             )
         )
         chunk_id += 1
-        buffer_tokens = buffer_tokens[-overlap:] if overlap else []
+
+    def flush_buffer(*, keep_overlap: bool) -> None:
+        nonlocal buffer_tokens
+        if not buffer_tokens:
+            return
+        _emit_chunk_from_tokens(buffer_tokens)
+        buffer_tokens = buffer_tokens[-overlap:] if keep_overlap and overlap else []
+
+    def _append_block_tokens(block: _Block) -> None:
+        nonlocal buffer_tokens
+        block_tokens = _tokenize(block.text)
+        buffer_tokens.extend(
+            _BufferToken(
+                token=token,
+                page=block.page_end,
+                section=block.section,
+                section_path=block.section_path,
+            )
+            for token in block_tokens
+        )
 
     for block in blocks:
-        if block.content_type in {"section_header", "header_footer_noise"}:
+        if block.content_type == "section_header":
             continue
 
         if block.content_type in {"toc", "image_artifact"}:
-            flush_buffer()
+            flush_buffer(keep_overlap=False)
             block_tokens = _tokenize(block.text)
             chunks.append(
                 TextChunk(
@@ -363,12 +395,15 @@ def chunk_document_by_section(
             chunk_id += 1
             continue
 
+        if block.content_type == "header_footer_noise":
+            continue
+
         block_tokens = _tokenize(block.text)
         if not block_tokens:
             continue
 
         if block.protected and block.content_type != "body_text":
-            flush_buffer()
+            flush_buffer(keep_overlap=False)
             chunks.append(
                 TextChunk(
                     chunk_id=chunk_id,
@@ -387,52 +422,17 @@ def chunk_document_by_section(
             chunk_id += 1
             continue
 
-        if buffer_tokens and block.section != buffer_section:
-            flush_buffer()
+        if buffer_tokens and block.section != buffer_tokens[0].section:
+            # Semantic section boundary: do not leak overlap into the new section.
+            flush_buffer(keep_overlap=False)
 
-        if not buffer_tokens:
-            buffer_page_start = block.page_start
-            buffer_page_end = block.page_end
-            buffer_section = block.section
-            buffer_section_path = block.section_path
-        else:
-            if block.page_start is not None:
-                buffer_page_start = block.page_start if buffer_page_start is None else min(buffer_page_start, block.page_start)
-            if block.page_end is not None:
-                buffer_page_end = block.page_end if buffer_page_end is None else max(buffer_page_end, block.page_end)
-
-        combined = buffer_tokens + block_tokens
-        while len(combined) > chunk_size:
-            current = combined[:chunk_size]
-            chunks.append(
-                TextChunk(
-                    chunk_id=chunk_id,
-                    section=buffer_section,
-                    text=" ".join(current),
-                    token_count=len(current),
-                    page_start=buffer_page_start,
-                    page_end=buffer_page_end,
-                    content_type="body_text",
-                    section_path=buffer_section_path,
-                )
-            )
-            chunk_id += 1
-            combined = combined[chunk_size - overlap :]
-        buffer_tokens = combined
+        _append_block_tokens(block)
+        while len(buffer_tokens) > chunk_size:
+            _emit_chunk_from_tokens(buffer_tokens[:chunk_size])
+            buffer_tokens = buffer_tokens[chunk_size - overlap :] if overlap else []
 
     if buffer_tokens:
-        chunks.append(
-            TextChunk(
-                chunk_id=chunk_id,
-                section=buffer_section,
-                text=" ".join(buffer_tokens),
-                token_count=len(buffer_tokens),
-                page_start=buffer_page_start,
-                page_end=buffer_page_end,
-                content_type="body_text",
-                section_path=buffer_section_path,
-            )
-        )
+        _emit_chunk_from_tokens(buffer_tokens)
 
     return _deduplicate_chunks(chunks)
 
