@@ -16,6 +16,7 @@ class HTMLParserTests(unittest.TestCase):
             <h1>Safety Standard</h1>
             <section><h2>Scope</h2><p>Applies to all devices.</p></section>
             <table>
+                <caption>Table 1. Scope matrix</caption>
                 <tr><th>Clause</th><th>Requirement</th></tr>
                 <tr><td>1.2</td><td>Use PPE</td></tr>
             </table>
@@ -29,6 +30,7 @@ class HTMLParserTests(unittest.TestCase):
         self.assertIn("# Safety Standard", parsed)
         self.assertIn("## Scope", parsed)
         self.assertIn("[TABLE]", parsed)
+        self.assertIn("[TABLE_CAPTION] Table 1. Scope matrix", parsed)
         self.assertIn("Clause | Requirement", parsed)
         self.assertIn("[IMAGE] Safety Diagram", parsed)
         self.assertIn("[IMAGE_CAPTION] Diagram A", parsed)

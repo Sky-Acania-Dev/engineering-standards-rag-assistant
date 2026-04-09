@@ -13,13 +13,10 @@ from app.ingestion.parsers.html import ingest_html_folder
 from app.ingestion.parsers.pdf import ingest_pdf_folder
 from app.ingestion.parsers.txt import ingest_txt_folder
 from app.ingestion.pipeline import IngestionDocument, ingest_documents
+from app.ingestion.normalize import normalize_ingested_text
 from app.llm.embeddings import Embedder, build_embedder
 from app.stores.docstore import JsonlChunkStore, StoredChunk
 from app.stores.faiss_store import FaissStore
-
-
-def _normalize_text(text: str) -> str:
-    return "\n".join(" ".join(line.split()) for line in text.splitlines()).strip()
 
 
 def _stable_chunk_uid(doc_id: str, chunk_id: int) -> str:
@@ -57,7 +54,7 @@ def build_index(
     ingestion_results = ingest_documents(
         documents,
         parser=lambda text: text,
-        normalizer=_normalize_text,
+        normalizer=normalize_ingested_text,
         fail_fast=True,
         chunk_size=chunk_size,
         overlap=overlap,
@@ -83,6 +80,13 @@ def build_index(
                     section=metadata.section,
                     chunk_id=metadata.chunk_id,
                     page=metadata.page,
+                    content_type=metadata.content_type,
+                    section_path=metadata.section_path,
+                    table_id=metadata.table_id,
+                    figure_id=metadata.figure_id,
+                    figure_ref=metadata.figure_ref,
+                    prev_chunk_id=metadata.prev_chunk_id,
+                    next_chunk_id=metadata.next_chunk_id,
                 )
             )
 

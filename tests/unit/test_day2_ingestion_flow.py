@@ -74,6 +74,33 @@ class Day2IngestionFlowTests(unittest.TestCase):
         self.assertIn("| value_1 | value_2 |", holder_text)
         self.assertIn("| value_3 | value_4 |", holder_text)
 
+    def test_ingestion_metadata_includes_page_and_content_type(self) -> None:
+        documents = [
+            IngestionDocument(
+                doc_id="doc-1",
+                title="Doc 1",
+                raw_text="""## Page 3
+
+# Title
+
+Body text here.
+
+[IMAGE] Figure asset (src=figs/f1.png)
+
+[IMAGE_CAPTION] Figure 1. Sample""",
+            )
+        ]
+
+        results = ingest_documents(documents, parser=lambda t: t, normalizer=lambda t: t, fail_fast=True, chunk_size=80, overlap=10)
+        self.assertEqual(1, len(results))
+        metadata = results[0].metadata
+
+        caption_meta = [m for m in metadata if m.content_type == "figure_caption"]
+        self.assertEqual(1, len(caption_meta))
+        self.assertEqual(3, caption_meta[0].page)
+        self.assertEqual("Figure 1", caption_meta[0].figure_id)
+        self.assertIsNotNone(caption_meta[0].figure_ref)
+
     def test_chunking_treats_numbered_lists_as_single_protected_chunk(self) -> None:
         prefix = " ".join(f"x{i}" for i in range(790))
         numbered_list = "\n".join([
@@ -91,6 +118,56 @@ class Day2IngestionFlowTests(unittest.TestCase):
         self.assertIn("2. second requirement", list_chunks[0].text)
         self.assertIn("3. third requirement", list_chunks[0].text)
 
+
+    def test_chunking_extracts_page_content_type_and_paths(self) -> None:
+        document = """## Page 1
+
+# Standard A
+
+Intro paragraph about controls.
+
+- first bullet
+- second bullet
+
+[IMAGE] System Diagram (src=figs/diag-1.png)
+
+[IMAGE_CAPTION] Figure 2. Layout overview
+
+[TABLE]
+[TABLE_CAPTION] Table 3. Test limits
+| Parameter | Limit |
+| --- | --- |
+| Voltage | 120V |
+[/TABLE]
+
+## Page 2
+
+## Section 2
+
+Note: Keep spacing.
+"""
+
+        chunks = chunk_document_by_section(document, chunk_size=120, overlap=20)
+
+        figure_chunks = [c for c in chunks if c.content_type == "figure_caption"]
+        self.assertEqual(1, len(figure_chunks))
+        self.assertEqual(1, figure_chunks[0].page)
+        self.assertEqual("Figure 2", figure_chunks[0].figure_id)
+        self.assertIn("src=figs/diag-1.png", figure_chunks[0].figure_ref or "")
+
+        table_chunks = [c for c in chunks if c.content_type == "table"]
+        self.assertEqual(1, len(table_chunks))
+        self.assertIn("Table caption: Table 3. Test limits", table_chunks[0].text)
+        self.assertIn("Table columns: Parameter; Limit", table_chunks[0].text)
+        self.assertIn("Row 2: Parameter=Voltage; Limit=120V", table_chunks[0].text)
+
+        note_chunks = [c for c in chunks if c.content_type == "note"]
+        self.assertEqual(1, len(note_chunks))
+        self.assertEqual(2, note_chunks[0].page)
+
+        body_chunks = [c for c in chunks if c.content_type == "body_text"]
+        self.assertTrue(any(c.section_path for c in body_chunks))
+        self.assertTrue(any(c.prev_chunk_id is not None or c.next_chunk_id is not None for c in chunks))
 
 
 if __name__ == "__main__":

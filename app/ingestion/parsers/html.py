@@ -16,6 +16,7 @@ class _StructuredHTMLParser(HTMLParser):
         self._table_row: list[str] = []
         self._table_rows: list[list[str]] = []
         self._in_caption = False
+        self._in_table_caption = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attrs_map = {k: v for k, v in attrs}
@@ -39,10 +40,16 @@ class _StructuredHTMLParser(HTMLParser):
             alt = (attrs_map.get("alt") or "").strip()
             src = (attrs_map.get("src") or "").strip()
             details = alt if alt else (src if src else "unlabeled image")
-            self._lines.append(f"[IMAGE] {details}")
+            if src:
+                self._lines.append(f"[IMAGE] {details} (src={src})")
+            else:
+                self._lines.append(f"[IMAGE] {details}")
 
         if tag == "figcaption":
             self._in_caption = True
+
+        if tag == "caption" and self._table_depth > 0:
+            self._in_table_caption = True
 
     def handle_endtag(self, tag: str) -> None:
         if self._tag_stack:
@@ -68,6 +75,9 @@ class _StructuredHTMLParser(HTMLParser):
         if tag == "figcaption":
             self._in_caption = False
 
+        if tag == "caption":
+            self._in_table_caption = False
+
     def handle_data(self, data: str) -> None:
         text = " ".join(data.split())
         if not text:
@@ -79,6 +89,10 @@ class _StructuredHTMLParser(HTMLParser):
 
         if self._in_caption:
             self._lines.append(f"[IMAGE_CAPTION] {text}")
+            return
+
+        if self._in_table_caption:
+            self._lines.append(f"[TABLE_CAPTION] {text}")
             return
 
         current_tag = self._tag_stack[-1] if self._tag_stack else ""
