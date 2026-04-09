@@ -169,21 +169,29 @@ Start Ollama locally with your model (example `llama3.1`). Then run API with:
 ### Bash
 
 ```bash
+export INDEX_DIR=.\temp\e2e_slice_index
+export EMBEDDER_PROVIDER=sentence_transformer
+export EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 export QUERY_DEFAULT_MODE=generative
 export QUERY_GENERATION_ENABLED=true
 export QUERY_GENERATION_PROVIDER=ollama
 export QUERY_GENERATION_MODEL=llama3.1
 export QUERY_GENERATION_ENDPOINT=http://localhost:11434/api/generate
+uvicorn app.main:app --reload --port 8000
 ```
 
 ### VS Code PowerShell
 
 ```powershell
+$env:INDEX_DIR = ".\temp\e2e_slice_index"
+$env:EMBEDDER_PROVIDER = "sentence_transformer"
+$env:EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 $env:QUERY_DEFAULT_MODE = "generative"
 $env:QUERY_GENERATION_ENABLED = "true"
 $env:QUERY_GENERATION_PROVIDER = "ollama"
 $env:QUERY_GENERATION_MODEL = "llama3.1"
 $env:QUERY_GENERATION_ENDPOINT = "http://localhost:11434/api/generate"
+py -m uvicorn app.main:app --reload --port 8000
 ```
 
 Then query:
@@ -193,14 +201,14 @@ Then query:
 ```bash
 curl -s http://127.0.0.1:8000/query \
   -H "Content-Type: application/json" \
-  -d '{"question":"Summarize this document in plain language.","mode":"generative","debug":true}' | jq
+  -d '{"question":"What are the key requirements described in this document?","mode":"generative","debug":true}' | jq
 ```
 
 ### VS Code PowerShell
 
 ```powershell
 $body = @{
-  question = "Summarize this document in plain language."
+  question = "What are the key requirements described in this document?"
   mode = "generative"
   debug = $true
 } | ConvertTo-Json -Depth 5
