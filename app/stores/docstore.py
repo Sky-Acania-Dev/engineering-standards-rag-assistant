@@ -13,7 +13,8 @@ class StoredChunk:
     title: str
     section: str
     chunk_id: int
-    page: int | None = None
+    page_start: int | None = None
+    page_end: int | None = None
     content_type: str = "body_text"
     section_path: tuple[str, ...] = ()
     table_id: str | None = None
@@ -68,6 +69,10 @@ class JsonlChunkStore:
                 section_path = payload.get("section_path")
                 if isinstance(section_path, list):
                     payload["section_path"] = tuple(section_path)
+                if "page" in payload and "page_start" not in payload:
+                    payload["page_start"] = payload.get("page")
+                    payload["page_end"] = payload.get("page")
+                    payload.pop("page", None)
                 store.upsert_many([StoredChunk(**payload)])
 
         return store

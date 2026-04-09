@@ -98,7 +98,8 @@ Body text here.
 
         caption_meta = [m for m in metadata if m.content_type == "figure_caption"]
         self.assertEqual(1, len(caption_meta))
-        self.assertEqual(3, caption_meta[0].page)
+        self.assertEqual(3, caption_meta[0].page_start)
+        self.assertEqual(3, caption_meta[0].page_end)
         self.assertEqual("Figure 1", caption_meta[0].figure_id)
         self.assertIsNotNone(caption_meta[0].figure_ref)
 
@@ -139,7 +140,8 @@ Body text here.
 
         self.assertEqual(1, len(results))
         self.assertGreaterEqual(len(results[0].chunks), 1)
-        self.assertTrue(any("[IMAGES]" in chunk.text for chunk in results[0].chunks))
+        artifacts = [chunk for chunk in results[0].chunks if chunk.content_type == "image_artifact"]
+        self.assertGreaterEqual(len(artifacts), 1)
 
     def test_ingestion_keeps_repeated_image_markers_across_pages(self) -> None:
         documents = [
@@ -165,7 +167,8 @@ Body text here.
 
         self.assertEqual(1, len(results))
         self.assertGreaterEqual(len(results[0].chunks), 1)
-        self.assertTrue(any("[IMAGES]" in chunk.text for chunk in results[0].chunks))
+        artifacts = [chunk for chunk in results[0].chunks if chunk.content_type == "image_artifact"]
+        self.assertGreaterEqual(len(artifacts), 1)
 
     def test_chunking_keeps_body_when_page_and_heading_share_block(self) -> None:
         document = "## Page 1\n# Inline Heading\nBody line one.\nBody line two."
@@ -175,7 +178,8 @@ Body text here.
         self.assertGreaterEqual(len(chunks), 1)
         body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
         self.assertGreaterEqual(len(body_chunks), 1)
-        self.assertEqual(1, body_chunks[0].page)
+        self.assertEqual(1, body_chunks[0].page_start)
+        self.assertEqual(1, body_chunks[0].page_end)
         self.assertIn("Body line one.", body_chunks[0].text)
         self.assertIn("Body line two.", body_chunks[0].text)
 
@@ -211,7 +215,8 @@ Note: Keep spacing.
 
         figure_chunks = [c for c in chunks if c.content_type == "figure_caption"]
         self.assertEqual(1, len(figure_chunks))
-        self.assertEqual(1, figure_chunks[0].page)
+        self.assertEqual(1, figure_chunks[0].page_start)
+        self.assertEqual(1, figure_chunks[0].page_end)
         self.assertEqual("Figure 2", figure_chunks[0].figure_id)
         self.assertIn("src=figs/diag-1.png", figure_chunks[0].figure_ref or "")
 
@@ -223,11 +228,41 @@ Note: Keep spacing.
 
         note_chunks = [c for c in chunks if c.content_type == "note"]
         self.assertEqual(1, len(note_chunks))
-        self.assertEqual(2, note_chunks[0].page)
+        self.assertEqual(2, note_chunks[0].page_start)
+        self.assertEqual(2, note_chunks[0].page_end)
 
         body_chunks = [c for c in chunks if c.content_type == "body_text"]
         self.assertTrue(any(c.section_path for c in body_chunks))
         self.assertTrue(any(c.prev_chunk_id is not None or c.next_chunk_id is not None for c in chunks))
+
+    def test_chunking_deduplicates_repeated_cover_artifacts(self) -> None:
+        document = (
+            "## Page 1\n\nTexas Minimum Construction Standards [IMAGES] 1 embedded image(s)\n\n"
+            "## Page 2\n\nTexas Minimum Construction Standards [IMAGES] 1 embedded image(s)\n\n"
+            "## Page 3\n\nTexas Minimum Construction Standards [IMAGES] 1 embedded image(s)"
+        )
+
+        chunks = chunk_document_by_section(document, chunk_size=80, overlap=10)
+
+        artifacts = [chunk for chunk in chunks if chunk.content_type == "image_artifact"]
+        self.assertEqual(1, len(artifacts))
+
+    def test_chunking_reconstructs_hierarchical_decimal_headings(self) -> None:
+        document = """## Page 5
+
+Chapter 1: Administration and General Requirements
+
+1.1 Definitions
+
+Capitalized terms are defined by program rules.
+"""
+
+        chunks = chunk_document_by_section(document, chunk_size=120, overlap=20)
+
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+        self.assertGreaterEqual(len(body_chunks), 1)
+        self.assertIn("Chapter 1: Administration and General Requirements", body_chunks[0].section_path)
+        self.assertIn("1.1 Definitions", body_chunks[0].section_path)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import re
+from difflib import SequenceMatcher
 from typing import Iterable
 
 
@@ -11,7 +12,8 @@ class TextChunk:
     section: str
     text: str
     token_count: int
-    page: int | None = None
+    page_start: int | None = None
+    page_end: int | None = None
     content_type: str = "body_text"
     section_path: tuple[str, ...] = ()
     table_id: str | None = None
@@ -25,7 +27,8 @@ class TextChunk:
 class _Block:
     text: str
     content_type: str
-    page: int | None
+    page_start: int | None
+    page_end: int | None
     section: str
     section_path: tuple[str, ...]
     table_id: str | None = None
@@ -112,12 +115,47 @@ def _serialize_table_block(block: str) -> tuple[str, str | None]:
     return "\n".join(rendered), caption
 
 
+def _update_heading_stack(
+    heading_stack: list[tuple[int, str]],
+    *,
+    level: int,
+    heading_text: str,
+) -> tuple[str, tuple[str, ...]]:
+    while heading_stack and heading_stack[-1][0] >= level:
+        heading_stack.pop()
+    heading_stack.append((level, heading_text))
+    return heading_text, tuple(title for _, title in heading_stack)
+
+
+def _detect_structural_heading(line: str) -> tuple[int, str] | None:
+    markdown_heading = re.match(r"^(#{1,6})\s+(.+)$", line)
+    if markdown_heading:
+        return len(markdown_heading.group(1)), markdown_heading.group(2).strip()
+
+    chapter_heading = re.match(r"^(Chapter\s+\d+.*|Section\s+[\w.\-]+.*)$", line, flags=re.IGNORECASE)
+    if chapter_heading:
+        return 2, line.strip()
+
+    decimal_heading = re.match(r"^(\d+(?:\.\d+){1,3})\s+(.+)$", line)
+    if decimal_heading:
+        depth = decimal_heading.group(1).count(".") + 3
+        return min(depth, 6), line.strip()
+
+    return None
+
+
+def _is_image_artifact_block(text: str) -> bool:
+    compact = " ".join(text.split())
+    return bool(re.search(r"\[IMAGES?\]\s+\d+\s+embedded\s+image\(s\)", compact, flags=re.IGNORECASE))
+
+
 def _iter_structured_blocks(document_text: str) -> list[_Block]:
     raw_blocks = [b.strip() for b in document_text.split("\n\n") if b.strip()]
     blocks: list[_Block] = []
     page: int | None = None
     heading_stack: list[tuple[int, str]] = []
     section = "Section 1"
+    section_path: tuple[str, ...] = ()
     pending_image_ref: str | None = None
 
     for raw_block in raw_blocks:
@@ -135,39 +173,30 @@ def _iter_structured_blocks(document_text: str) -> list[_Block]:
                 cursor += 1
                 continue
 
-            heading_match = re.match(r"^(#{1,6})\s+(.+)$", current)
-            chapter_match = re.match(r"^(Chapter\s+\d+.*|Section\s+[\w.\-]+.*)$", current, flags=re.IGNORECASE)
-            if heading_match or chapter_match:
-                if heading_match:
-                    level = len(heading_match.group(1))
-                    heading_text = heading_match.group(2).strip()
-                else:
-                    level = 2
-                    heading_text = current.strip()
-                while heading_stack and heading_stack[-1][0] >= level:
-                    heading_stack.pop()
-                heading_stack.append((level, heading_text))
-                section = heading_text
-                blocks.append(
-                    _Block(
-                        text=heading_text,
-                        content_type="section_header",
-                        page=page,
-                        section=section,
-                        section_path=tuple(title for _, title in heading_stack),
-                        protected=True,
-                    )
+            heading_detected = _detect_structural_heading(current)
+            if heading_detected is None:
+                break
+
+            level, heading_text = heading_detected
+            section, section_path = _update_heading_stack(heading_stack, level=level, heading_text=heading_text)
+            blocks.append(
+                _Block(
+                    text=heading_text,
+                    content_type="section_header",
+                    page_start=page,
+                    page_end=page,
+                    section=section,
+                    section_path=section_path,
+                    protected=True,
                 )
-                cursor += 1
-                continue
-            break
+            )
+            cursor += 1
 
         lines = lines[cursor:]
         if not lines:
             continue
 
         full_block = "\n".join(lines)
-        section_path = tuple(title for _, title in heading_stack)
         content_type = "body_text"
         protected = False
         table_id: str | None = None
@@ -183,7 +212,8 @@ def _iter_structured_blocks(document_text: str) -> list[_Block]:
                 _Block(
                     text=full_block,
                     content_type="header_footer_noise",
-                    page=page,
+                    page_start=page,
+                    page_end=page,
                     section=section,
                     section_path=section_path,
                     figure_ref=pending_image_ref,
@@ -213,12 +243,16 @@ def _iter_structured_blocks(document_text: str) -> list[_Block]:
         elif _is_list_block(lines):
             content_type = "list"
             protected = True
+        elif _is_image_artifact_block(full_block):
+            content_type = "image_artifact"
+            protected = True
 
         blocks.append(
             _Block(
                 text=full_block,
                 content_type=content_type,
-                page=page,
+                page_start=page,
+                page_end=page,
                 section=section,
                 section_path=section_path,
                 table_id=table_id,
@@ -229,6 +263,45 @@ def _iter_structured_blocks(document_text: str) -> list[_Block]:
         )
 
     return blocks
+
+
+def _normalized_chunk_text(text: str) -> str:
+    collapsed = " ".join(text.lower().split())
+    collapsed = re.sub(r"\bpage\s+\d+\b", "", collapsed, flags=re.IGNORECASE)
+    return collapsed.strip()
+
+
+def _is_near_duplicate(left: str, right: str) -> bool:
+    if left == right:
+        return True
+    if not left or not right:
+        return False
+    return SequenceMatcher(None, left, right).ratio() >= 0.96
+
+
+def _deduplicate_chunks(chunks: list[TextChunk]) -> list[TextChunk]:
+    kept: list[TextChunk] = []
+    normalized_seen: list[str] = []
+
+    for chunk in chunks:
+        normalized = _normalized_chunk_text(chunk.text)
+        should_skip = any(_is_near_duplicate(normalized, seen) for seen in normalized_seen)
+        if should_skip and chunk.content_type in {"body_text", "image_artifact", "toc"}:
+            continue
+        kept.append(chunk)
+        normalized_seen.append(normalized)
+
+    reindexed: list[TextChunk] = []
+    for new_id, chunk in enumerate(kept):
+        reindexed.append(replace(chunk, chunk_id=new_id))
+
+    linked: list[TextChunk] = []
+    for idx, chunk in enumerate(reindexed):
+        prev_chunk_id = reindexed[idx - 1].chunk_id if idx > 0 else None
+        next_chunk_id = reindexed[idx + 1].chunk_id if idx + 1 < len(reindexed) else None
+        linked.append(replace(chunk, prev_chunk_id=prev_chunk_id, next_chunk_id=next_chunk_id))
+
+    return linked
 
 
 def chunk_document_by_section(
@@ -244,7 +317,8 @@ def chunk_document_by_section(
     chunks: list[TextChunk] = []
     chunk_id = 0
     buffer_tokens: list[str] = []
-    buffer_page: int | None = None
+    buffer_page_start: int | None = None
+    buffer_page_end: int | None = None
     buffer_section = "Section 1"
     buffer_section_path: tuple[str, ...] = ()
 
@@ -258,7 +332,8 @@ def chunk_document_by_section(
                 section=buffer_section,
                 text=" ".join(buffer_tokens),
                 token_count=len(buffer_tokens),
-                page=buffer_page,
+                page_start=buffer_page_start,
+                page_end=buffer_page_end,
                 content_type="body_text",
                 section_path=buffer_section_path,
             )
@@ -270,8 +345,7 @@ def chunk_document_by_section(
         if block.content_type in {"section_header", "header_footer_noise"}:
             continue
 
-        if block.content_type == "toc":
-            # Keep TOC isolated from body-text chunks.
+        if block.content_type in {"toc", "image_artifact"}:
             flush_buffer()
             block_tokens = _tokenize(block.text)
             chunks.append(
@@ -280,8 +354,9 @@ def chunk_document_by_section(
                     section=block.section,
                     text=block.text,
                     token_count=len(block_tokens),
-                    page=block.page,
-                    content_type="toc",
+                    page_start=block.page_start,
+                    page_end=block.page_end,
+                    content_type=block.content_type,
                     section_path=block.section_path,
                 )
             )
@@ -300,7 +375,8 @@ def chunk_document_by_section(
                     section=block.section,
                     text=block.text,
                     token_count=len(block_tokens),
-                    page=block.page,
+                    page_start=block.page_start,
+                    page_end=block.page_end,
                     content_type=block.content_type,
                     section_path=block.section_path,
                     table_id=block.table_id,
@@ -315,9 +391,15 @@ def chunk_document_by_section(
             flush_buffer()
 
         if not buffer_tokens:
-            buffer_page = block.page
+            buffer_page_start = block.page_start
+            buffer_page_end = block.page_end
             buffer_section = block.section
             buffer_section_path = block.section_path
+        else:
+            if block.page_start is not None:
+                buffer_page_start = block.page_start if buffer_page_start is None else min(buffer_page_start, block.page_start)
+            if block.page_end is not None:
+                buffer_page_end = block.page_end if buffer_page_end is None else max(buffer_page_end, block.page_end)
 
         combined = buffer_tokens + block_tokens
         while len(combined) > chunk_size:
@@ -328,7 +410,8 @@ def chunk_document_by_section(
                     section=buffer_section,
                     text=" ".join(current),
                     token_count=len(current),
-                    page=buffer_page,
+                    page_start=buffer_page_start,
+                    page_end=buffer_page_end,
                     content_type="body_text",
                     section_path=buffer_section_path,
                 )
@@ -344,34 +427,14 @@ def chunk_document_by_section(
                 section=buffer_section,
                 text=" ".join(buffer_tokens),
                 token_count=len(buffer_tokens),
-                page=buffer_page,
+                page_start=buffer_page_start,
+                page_end=buffer_page_end,
                 content_type="body_text",
                 section_path=buffer_section_path,
             )
         )
 
-    linked: list[TextChunk] = []
-    for idx, chunk in enumerate(chunks):
-        prev_chunk_id = chunks[idx - 1].chunk_id if idx > 0 else None
-        next_chunk_id = chunks[idx + 1].chunk_id if idx + 1 < len(chunks) else None
-        linked.append(
-            TextChunk(
-                chunk_id=chunk.chunk_id,
-                section=chunk.section,
-                text=chunk.text,
-                token_count=chunk.token_count,
-                page=chunk.page,
-                content_type=chunk.content_type,
-                section_path=chunk.section_path,
-                table_id=chunk.table_id,
-                figure_id=chunk.figure_id,
-                figure_ref=chunk.figure_ref,
-                prev_chunk_id=prev_chunk_id,
-                next_chunk_id=next_chunk_id,
-            )
-        )
-
-    return linked
+    return _deduplicate_chunks(chunks)
 
 
 def chunks_to_text(chunks: Iterable[TextChunk]) -> list[str]:
