@@ -167,6 +167,18 @@ Body text here.
         self.assertGreaterEqual(len(results[0].chunks), 1)
         self.assertTrue(any("[IMAGES]" in chunk.text for chunk in results[0].chunks))
 
+    def test_chunking_keeps_body_when_page_and_heading_share_block(self) -> None:
+        document = "## Page 1\n# Inline Heading\nBody line one.\nBody line two."
+
+        chunks = chunk_document_by_section(document, chunk_size=120, overlap=20)
+
+        self.assertGreaterEqual(len(chunks), 1)
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+        self.assertGreaterEqual(len(body_chunks), 1)
+        self.assertEqual(1, body_chunks[0].page)
+        self.assertIn("Body line one.", body_chunks[0].text)
+        self.assertIn("Body line two.", body_chunks[0].text)
+
     def test_chunking_extracts_page_content_type_and_paths(self) -> None:
         document = """## Page 1
 

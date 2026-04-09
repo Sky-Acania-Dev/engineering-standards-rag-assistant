@@ -126,34 +126,44 @@ def _iter_structured_blocks(document_text: str) -> list[_Block]:
         if not lines:
             continue
 
-        page_match = re.match(r"^##\s+Page\s+(\d+)\b", lines[0], flags=re.IGNORECASE)
-        if page_match and len(lines) == 1:
-            page = int(page_match.group(1))
-            continue
+        cursor = 0
+        while cursor < len(lines):
+            current = lines[cursor]
+            page_match = re.match(r"^##\s+Page\s+(\d+)\b", current, flags=re.IGNORECASE)
+            if page_match:
+                page = int(page_match.group(1))
+                cursor += 1
+                continue
 
-        heading_match = re.match(r"^(#{1,6})\s+(.+)$", lines[0])
-        chapter_match = re.match(r"^(Chapter\s+\d+.*|Section\s+[\w.\-]+.*)$", lines[0], flags=re.IGNORECASE)
-        if heading_match or chapter_match:
-            if heading_match:
-                level = len(heading_match.group(1))
-                heading_text = heading_match.group(2).strip()
-            else:
-                level = 2
-                heading_text = lines[0].strip()
-            while heading_stack and heading_stack[-1][0] >= level:
-                heading_stack.pop()
-            heading_stack.append((level, heading_text))
-            section = heading_text
-            blocks.append(
-                _Block(
-                    text=heading_text,
-                    content_type="section_header",
-                    page=page,
-                    section=section,
-                    section_path=tuple(title for _, title in heading_stack),
-                    protected=True,
+            heading_match = re.match(r"^(#{1,6})\s+(.+)$", current)
+            chapter_match = re.match(r"^(Chapter\s+\d+.*|Section\s+[\w.\-]+.*)$", current, flags=re.IGNORECASE)
+            if heading_match or chapter_match:
+                if heading_match:
+                    level = len(heading_match.group(1))
+                    heading_text = heading_match.group(2).strip()
+                else:
+                    level = 2
+                    heading_text = current.strip()
+                while heading_stack and heading_stack[-1][0] >= level:
+                    heading_stack.pop()
+                heading_stack.append((level, heading_text))
+                section = heading_text
+                blocks.append(
+                    _Block(
+                        text=heading_text,
+                        content_type="section_header",
+                        page=page,
+                        section=section,
+                        section_path=tuple(title for _, title in heading_stack),
+                        protected=True,
+                    )
                 )
-            )
+                cursor += 1
+                continue
+            break
+
+        lines = lines[cursor:]
+        if not lines:
             continue
 
         full_block = "\n".join(lines)
