@@ -8,6 +8,7 @@ from pathlib import Path
 from app.stores.docstore import JsonlChunkStore, StoredChunk
 from app.stores.faiss_store import FaissStore
 from scripts.build_index import build_index
+from app.ingestion.normalize import normalize_ingested_text
 
 
 class FaissStoreTests(unittest.TestCase):
@@ -62,6 +63,57 @@ class DocStoreTests(unittest.TestCase):
             self.assertIsNotNone(record)
             assert record is not None
             self.assertEqual("alpha", record.text)
+
+    def test_save_orders_by_numeric_chunk_id_not_uid_lexicographic(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store_path = Path(temp_dir) / "chunk_store.jsonl"
+            store = JsonlChunkStore()
+            store.upsert_many(
+                [
+                    StoredChunk(chunk_uid="doc-1:10", text="ten", doc_id="doc-1", title="Doc", section="S", chunk_id=10),
+                    StoredChunk(chunk_uid="doc-1:2", text="two", doc_id="doc-1", title="Doc", section="S", chunk_id=2),
+                    StoredChunk(chunk_uid="doc-1:1", text="one", doc_id="doc-1", title="Doc", section="S", chunk_id=1),
+                ]
+            )
+            store.save(store_path)
+
+            lines = [json.loads(line) for line in store_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertEqual([1, 2, 10], [line["chunk_id"] for line in lines])
+
+
+class NormalizeTests(unittest.TestCase):
+    def test_normalize_ingested_text_removes_repeated_headers_and_page_artifacts(self) -> None:
+        raw = """## Page 1
+
+ACME STANDARD HEADER
+
+1 | P a g e
+
+Body line one
+
+## Page 2
+
+ACME STANDARD HEADER
+
+2 | P a g e
+
+Body line two
+
+## Page 3
+
+ACME STANDARD HEADER
+
+3 | P a g e
+
+Body line three
+"""
+        normalized = normalize_ingested_text(raw)
+
+        self.assertNotIn("ACME STANDARD HEADER", normalized)
+        self.assertNotIn("P a g e", normalized)
+        self.assertIn("Body line one", normalized)
+        self.assertIn("Body line two", normalized)
+        self.assertIn("Body line three", normalized)
 
 
 class BuildIndexTests(unittest.TestCase):
