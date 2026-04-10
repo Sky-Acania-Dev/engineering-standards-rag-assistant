@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from app.ingestion.footnote_detector import detect_footnote_bodies, detect_superscript_anchors
+import logging
+
+from app.ingestion.footnote_detector import analyze_page_layout
 from app.ingestion.footnote_linker import link_anchors_to_bodies
 from app.ingestion.pdf_layout_extractor import tokens_from_pdfplumber_words
 from app.ingestion.text_normalizer import render_page_text_with_footnotes
@@ -84,10 +86,17 @@ def _extract_structured_page_text_pdfplumber(page: Any, page_number: int) -> str
     page_text_lines: list[str] = []
     layout_tokens = tokens_from_pdfplumber_words(page, page_number)
     if layout_tokens:
-        anchors = detect_superscript_anchors(layout_tokens)
-        bodies = detect_footnote_bodies(layout_tokens, page_height=float(getattr(page, "height", 0.0) or 0.0))
-        links = link_anchors_to_bodies(anchors, bodies)
-        rendered_lines, footnote_meta = render_page_text_with_footnotes(layout_tokens, links)
+        analysis = analyze_page_layout(layout_tokens, page_height=float(getattr(page, "height", 0.0) or 0.0))
+        links = link_anchors_to_bodies(list(analysis.anchor_candidates), analysis.footnote_bodies)
+        rendered_lines, footnote_meta = render_page_text_with_footnotes(layout_tokens, links, analysis=analysis)
+        logger.debug(
+            "footnote_analysis page=%s anchors=%s bodies=%s links=%s rejected=%s",
+            page_number,
+            len(analysis.anchor_candidates),
+            len(analysis.footnote_bodies),
+            len(links),
+            len(analysis.rejected_anchors),
+        )
         page_text_lines = [line for line in rendered_lines if line.strip()]
         for entry in footnote_meta:
             lines.append(f"[FOOTNOTE_DEF] {entry['id']}|{entry['anchor_text']}|{entry['content']}")
@@ -216,3 +225,4 @@ def ingest_pdf_folder(folder_path: str) -> list[dict[str, Any]]:
             print(f"Skipping {file_path}: {exc}")
 
     return documents
+logger = logging.getLogger(__name__)

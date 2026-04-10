@@ -22,16 +22,41 @@ class FootnoteBody:
     bottom: float
 
 
-def detect_superscript_anchors(tokens: list[LayoutToken]) -> list[AnchorCandidate]:
+@dataclass(frozen=True)
+class RejectedAnchor:
+    token_index: int
+    reason: str
+
+
+@dataclass(frozen=True)
+class PageAnalysis:
+    body_token_indexes: tuple[int, ...]
+    footnote_token_indexes: tuple[int, ...]
+    anchor_candidates: tuple[AnchorCandidate, ...]
+    footnote_bodies: dict[int, FootnoteBody]
+    rejected_anchors: tuple[RejectedAnchor, ...]
+
+
+def detect_superscript_anchors(tokens: list[LayoutToken], *, body_token_indexes: set[int] | None = None) -> tuple[list[AnchorCandidate], list[RejectedAnchor]]:
     anchors: list[AnchorCandidate] = []
+    rejected: list[RejectedAnchor] = []
     for idx in range(1, len(tokens)):
+        if body_token_indexes is not None and idx not in body_token_indexes:
+            continue
         token = tokens[idx]
         prev = tokens[idx - 1]
         if token.line_id != prev.line_id:
             continue
         if not re.fullmatch(r"\d{1,3}", token.text.strip()):
             continue
+        if re.fullmatch(r"\d{4}", prev.text.strip()):
+            rejected.append(RejectedAnchor(token_index=idx, reason="year_neighbor"))
+            continue
         if prev.text.lower().startswith(("http://", "https://", "www.")):
+            rejected.append(RejectedAnchor(token_index=idx, reason="url_neighbor"))
+            continue
+        if re.search(r"[./-]", prev.text):
+            rejected.append(RejectedAnchor(token_index=idx, reason="protected_token_neighbor"))
             continue
         gap = token.x0 - prev.x1
         size_ratio = (token.size / prev.size) if prev.size > 0 else 1.0
@@ -44,6 +69,7 @@ def detect_superscript_anchors(tokens: list[LayoutToken]) -> list[AnchorCandidat
         if 0 <= gap <= 3.5:
             score += 0.2
         if score < 0.8:
+            rejected.append(RejectedAnchor(token_index=idx, reason="low_score"))
             continue
         anchors.append(
             AnchorCandidate(
@@ -53,7 +79,7 @@ def detect_superscript_anchors(tokens: list[LayoutToken]) -> list[AnchorCandidat
                 confidence=round(score, 3),
             )
         )
-    return anchors
+    return anchors, rejected
 
 
 def detect_footnote_bodies(tokens: list[LayoutToken], *, page_height: float) -> dict[int, FootnoteBody]:
@@ -85,3 +111,43 @@ def detect_footnote_bodies(tokens: list[LayoutToken], *, page_height: float) -> 
             merged = f"{previous.content} {content}".strip()
             bodies[note_id] = FootnoteBody(id=note_id, content=merged, top=previous.top, bottom=line[0].bottom)
     return bodies
+
+
+def analyze_page_layout(tokens: list[LayoutToken], *, page_height: float) -> PageAnalysis:
+    if not tokens:
+        return PageAnalysis((), (), (), {}, ())
+    # Footnote region: numeric-labeled lines near bottom with smaller fonts.
+    body_size_candidates = [t.size for t in tokens if t.size > 0 and t.top < page_height * 0.75]
+    if not body_size_candidates:
+        body_size_candidates = [t.size for t in tokens if t.size > 0]
+    median_size = sorted(body_size_candidates)[len(body_size_candidates) // 2] if body_size_candidates else 0
+    line_map: dict[int, list[tuple[int, LayoutToken]]] = {}
+    for idx, tok in enumerate(tokens):
+        line_map.setdefault(tok.line_id, []).append((idx, tok))
+
+    footnote_token_indexes: set[int] = set()
+    for line_id, indexed in line_map.items():
+        line = [tok for _, tok in sorted(indexed, key=lambda x: x[1].x0)]
+        if not line:
+            continue
+        first = line[0].text.strip().rstrip(").")
+        avg_size = sum(tok.size for tok in line) / max(1, len(line))
+        if (
+            line[0].top >= page_height * 0.78
+            and re.fullmatch(r"\d{1,3}", first)
+            and (median_size == 0 or avg_size <= median_size * 0.95)
+        ):
+            for idx, _ in indexed:
+                footnote_token_indexes.add(idx)
+
+    bodies = detect_footnote_bodies([tok for idx, tok in enumerate(tokens) if idx in footnote_token_indexes], page_height=page_height)
+    body_indexes = tuple(idx for idx in range(len(tokens)) if idx not in footnote_token_indexes)
+    anchors, rejected = detect_superscript_anchors(tokens, body_token_indexes=set(body_indexes))
+
+    return PageAnalysis(
+        body_token_indexes=body_indexes,
+        footnote_token_indexes=tuple(sorted(footnote_token_indexes)),
+        anchor_candidates=tuple(anchors),
+        footnote_bodies=bodies,
+        rejected_anchors=tuple(rejected),
+    )
