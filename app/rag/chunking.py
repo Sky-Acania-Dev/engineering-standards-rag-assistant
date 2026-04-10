@@ -138,8 +138,12 @@ def _update_heading_stack(
 
 def _normalize_heading_text(text: str) -> str:
     cleaned = " ".join(text.split())
+    cleaned = cleaned.replace("###", " ")
+    cleaned = re.sub(r"\bIC-\s+P-", "IC-P-", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
     # OCR/extraction artifacts often append page digits directly to the heading.
     cleaned = re.sub(r"(?<=[A-Za-z])\d{1,4}$", "", cleaned).strip()
+    cleaned = re.sub(r"\b(Section\s+[A-Za-z]\d{3,})\d{1,2}$", r"\1", cleaned, flags=re.IGNORECASE)
     return cleaned
 
 
@@ -193,6 +197,16 @@ def _is_image_artifact_block(text: str) -> bool:
     )
 
 
+def _is_chapter_heading(heading: str) -> bool:
+    return bool(re.match(r"^Chapter\s+\d+[A-Za-z]?(?:\s*:.*)?$", heading, flags=re.IGNORECASE))
+
+
+def _is_section_heading(heading: str) -> bool:
+    return bool(re.match(r"^\d+(?:\.\d+){1,3}\s+.+$", heading)) or bool(
+        re.match(r"^Section\s+[\w.\-]+(?:\s*:.*)?$", heading, flags=re.IGNORECASE)
+    )
+
+
 def _iter_structured_blocks(document_text: str) -> list[_Block]:
     raw_blocks = [b.strip() for b in document_text.split("\n\n") if b.strip()]
     blocks: list[_Block] = []
@@ -216,6 +230,8 @@ def _iter_structured_blocks(document_text: str) -> list[_Block]:
                 page = int(page_match.group(1))
                 cursor += 1
                 continue
+            if _looks_like_toc_line(current):
+                break
 
             heading_detected = _detect_structural_heading(current)
             if heading_detected is None:
@@ -361,98 +377,147 @@ def chunk_document_by_section(
     blocks = _iter_structured_blocks(document_text)
     chunks: list[TextChunk] = []
     chunk_id = 0
-    buffer_tokens: list[_BufferToken] = []
-    active_section = "Section 1"
-    active_section_path: tuple[str, ...] = ()
 
-    def _emit_chunk_from_tokens(tokens: list[_BufferToken]) -> None:
-        nonlocal chunk_id
-        if not tokens:
+    active_chapter: str | None = None
+    active_section_heading: str | None = None
+    body_tokens: list[tuple[str, int | None]] = []
+    body_section = "Section 1"
+    body_section_path: tuple[str, ...] = ()
+    toc_buffer: list[_Block] = []
+
+    def _current_section_metadata() -> tuple[str, tuple[str, ...]]:
+        if active_section_heading is not None:
+            if active_chapter and active_section_heading != active_chapter:
+                return active_section_heading, (active_chapter, active_section_heading)
+            return active_section_heading, (active_section_heading,)
+        if active_chapter is not None:
+            return active_chapter, (active_chapter,)
+        return "Section 1", ()
+
+    def _body_heading_prefix(page: int | None) -> list[tuple[str, int | None]]:
+        section, path = _current_section_metadata()
+        lines: list[str] = []
+        if path:
+            lines.extend(path)
+        elif section:
+            lines.append(section)
+        return [(line, page) for line in lines if line]
+
+    def _emit_toc_buffer() -> None:
+        nonlocal chunk_id, toc_buffer
+        if not toc_buffer:
             return
-        first = tokens[0]
-        last = tokens[-1]
+        text = "\n".join(block.text for block in toc_buffer if block.text.strip())
+        page_start = next((block.page_start for block in toc_buffer if block.page_start is not None), None)
+        page_end = next((block.page_end for block in reversed(toc_buffer) if block.page_end is not None), None)
+        toc_section = active_section_heading or active_chapter or "Table of Contents"
+        toc_path = tuple(p for p in (active_chapter, active_section_heading) if p) or ("Table of Contents",)
         chunks.append(
             TextChunk(
                 chunk_id=chunk_id,
-                section=first.section,
-                text=" ".join(token.token for token in tokens),
-                token_count=len(tokens),
-                page_start=first.page,
-                page_end=last.page,
-                content_type="body_text",
-                section_path=first.section_path,
+                section=toc_section,
+                text=text,
+                token_count=len(_tokenize(text)),
+                page_start=page_start,
+                page_end=page_end,
+                content_type="toc",
+                section_path=toc_path,
             )
         )
         chunk_id += 1
+        toc_buffer = []
 
-    def flush_buffer(*, keep_overlap: bool) -> None:
-        nonlocal buffer_tokens
-        if not buffer_tokens:
+    def _flush_body_chunks() -> None:
+        nonlocal body_tokens, chunk_id
+        if not body_tokens:
             return
-        _emit_chunk_from_tokens(buffer_tokens)
-        buffer_tokens = buffer_tokens[-overlap:] if keep_overlap and overlap else []
-
-    def _append_block_tokens(block: _Block) -> None:
-        nonlocal buffer_tokens
-        block_tokens = _tokenize(block.text)
-        buffer_tokens.extend(
-            _BufferToken(
-                token=token,
-                page=block.page_end,
-                section=block.section,
-                section_path=block.section_path,
-            )
-            for token in block_tokens
-        )
-
-    for block in blocks:
-        if block.content_type == "section_header":
-            # Structural anchor: hard boundary and deterministic metadata reset.
-            flush_buffer(keep_overlap=False)
-            active_section = block.section
-            active_section_path = block.section_path
-            continue
-
-        if block.content_type in {"toc", "image_artifact"}:
-            flush_buffer(keep_overlap=False)
-            block_tokens = _tokenize(block.text)
+        local_tokens = body_tokens
+        while local_tokens:
+            current = local_tokens[:chunk_size]
+            chunk_pages = [page for _, page in current if page is not None]
             chunks.append(
                 TextChunk(
                     chunk_id=chunk_id,
-                    section=block.section,
-                    text=block.text,
-                    token_count=len(block_tokens),
-                    page_start=block.page_start,
-                    page_end=block.page_end,
-                    content_type=block.content_type,
-                    section_path=block.section_path,
+                    section=body_section,
+                    text=" ".join(token for token, _ in current),
+                    token_count=len(current),
+                    page_start=chunk_pages[0] if chunk_pages else None,
+                    page_end=chunk_pages[-1] if chunk_pages else None,
+                    content_type="body_text",
+                    section_path=body_section_path,
                 )
             )
             chunk_id += 1
+            if len(local_tokens) <= chunk_size:
+                break
+            local_tokens = local_tokens[chunk_size - overlap :] if overlap else local_tokens[chunk_size:]
+        body_tokens = []
+
+    def _start_new_section(page: int | None) -> None:
+        nonlocal body_section, body_section_path, body_tokens
+        body_section, body_section_path = _current_section_metadata()
+        body_tokens = _body_heading_prefix(page)
+
+    for block in blocks:
+        if block.content_type == "toc":
+            if body_tokens:
+                _flush_body_chunks()
+            toc_buffer.append(block)
+            continue
+        _emit_toc_buffer()
+
+        if block.content_type == "section_header":
+            _flush_body_chunks()
+            if _is_chapter_heading(block.text):
+                active_chapter = block.text
+                active_section_heading = None
+            elif _is_section_heading(block.text):
+                active_section_heading = block.text
+                if active_chapter is None:
+                    active_chapter = block.text if block.text.lower().startswith("chapter ") else None
+            else:
+                active_section_heading = block.text
             continue
 
         if block.content_type == "header_footer_noise":
+            continue
+
+        if block.content_type == "image_artifact":
+            _flush_body_chunks()
+            artifact_tokens = _tokenize(block.text)
+            section_name, section_path = _current_section_metadata()
+            chunks.append(
+                TextChunk(
+                    chunk_id=chunk_id,
+                    section=section_name,
+                    text=block.text,
+                    token_count=len(artifact_tokens),
+                    page_start=block.page_start,
+                    page_end=block.page_end,
+                    content_type="image_artifact",
+                    section_path=section_path,
+                )
+            )
+            chunk_id += 1
             continue
 
         block_tokens = _tokenize(block.text)
         if not block_tokens:
             continue
 
-        block_section = block.section if block.section != "Section 1" else active_section
-        block_section_path = block.section_path if block.section_path else active_section_path
-
         if block.protected and block.content_type != "body_text":
-            flush_buffer(keep_overlap=False)
+            _flush_body_chunks()
+            section_name, section_path = _current_section_metadata()
             chunks.append(
                 TextChunk(
                     chunk_id=chunk_id,
-                    section=block_section,
+                    section=section_name,
                     text=block.text,
                     token_count=len(block_tokens),
                     page_start=block.page_start,
                     page_end=block.page_end,
                     content_type=block.content_type,
-                    section_path=block_section_path,
+                    section_path=section_path,
                     table_id=block.table_id,
                     figure_id=block.figure_id,
                     figure_ref=block.figure_ref,
@@ -461,23 +526,12 @@ def chunk_document_by_section(
             chunk_id += 1
             continue
 
-        if buffer_tokens and block_section != buffer_tokens[0].section:
-            # Semantic section boundary: do not leak overlap into the new section.
-            flush_buffer(keep_overlap=False)
+        if not body_tokens:
+            _start_new_section(block.page_start)
+        body_tokens.extend((token, block.page_end) for token in block_tokens)
 
-        _append_block_tokens(
-            replace(
-                block,
-                section=block_section,
-                section_path=block_section_path,
-            )
-        )
-        while len(buffer_tokens) > chunk_size:
-            _emit_chunk_from_tokens(buffer_tokens[:chunk_size])
-            buffer_tokens = buffer_tokens[chunk_size - overlap :] if overlap else []
-
-    if buffer_tokens:
-        _emit_chunk_from_tokens(buffer_tokens)
+    _emit_toc_buffer()
+    _flush_body_chunks()
 
     return _deduplicate_chunks(chunks)
 

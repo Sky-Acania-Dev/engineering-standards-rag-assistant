@@ -235,6 +235,40 @@ Note: Keep spacing.
         self.assertTrue(any(c.section_path for c in body_chunks))
         self.assertTrue(any(c.prev_chunk_id is not None or c.next_chunk_id is not None for c in chunks))
 
+    def test_multi_page_toc_is_preserved_and_not_mixed_with_body(self) -> None:
+        document = """## Page 2
+
+Contents
+Chapter 1: Administration .................................................................. 5
+1.1 Definitions ............................................................................... 5
+
+## Page 3
+
+2.9 Landscaping for New Construction and Additions ............................. 13
+Chapter 3: Foundations .................................................................... 13
+
+## Page 5
+
+Chapter 1: Administration and General Requirements
+
+1.1 Definitions
+
+The capitalized terms used herein are defined below.
+"""
+        chunks = chunk_document_by_section(document, chunk_size=120, overlap=20)
+
+        toc_chunks = [chunk for chunk in chunks if chunk.content_type == "toc"]
+        self.assertEqual(1, len(toc_chunks))
+        self.assertIn("Contents", toc_chunks[0].text)
+        self.assertIn("2.9 Landscaping for New Construction and Additions", toc_chunks[0].text)
+        self.assertIn("Chapter 3: Foundations", toc_chunks[0].text)
+
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+        self.assertTrue(body_chunks)
+        self.assertTrue(all("Contents" not in chunk.text for chunk in body_chunks))
+        self.assertEqual(2, toc_chunks[0].page_start)
+        self.assertEqual(3, toc_chunks[0].page_end)
+
     def test_chunking_deduplicates_repeated_cover_artifacts(self) -> None:
         document = (
             "## Page 1\n\nTexas Minimum Construction Standards [IMAGES] 1 embedded image(s)\n\n"
@@ -263,6 +297,8 @@ Capitalized terms are defined by program rules.
         self.assertGreaterEqual(len(body_chunks), 1)
         self.assertIn("Chapter 1: Administration and General Requirements", body_chunks[0].section_path)
         self.assertIn("1.1 Definitions", body_chunks[0].section_path)
+        self.assertIn("Chapter 1: Administration and General Requirements", body_chunks[0].text)
+        self.assertIn("1.1 Definitions", body_chunks[0].text)
 
     def test_page_start_recomputes_across_pages_when_chunks_slide(self) -> None:
         page1 = " ".join(f"p1_{i}" for i in range(12))
@@ -329,6 +365,7 @@ eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twen
         self.assertTrue(chapter1_chunks)
         self.assertTrue(chapter2_chunks)
         self.assertTrue(all("Chapter 2: Beta" not in chunk.text for chunk in chapter1_chunks))
+        self.assertTrue(all("Chapter 1: Alpha" not in chunk.text for chunk in chapter2_chunks))
 
     def test_malformed_heading_text_is_normalized(self) -> None:
         document = """## Page 1
@@ -343,6 +380,23 @@ All fixtures must be pressure tested.
         self.assertTrue(body_chunks)
         self.assertEqual("5.4 Water Supply", body_chunks[0].section)
         self.assertIn("5.4 Water Supply", body_chunks[0].section_path)
+
+    def test_footnote_contaminated_heading_is_normalized(self) -> None:
+        document = """## Page 13
+
+Chapter 3: Foundations9
+
+3.1 General Requirements
+
+Foundation requirements begin here.
+"""
+        chunks = chunk_document_by_section(document, chunk_size=80, overlap=10)
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+
+        self.assertTrue(body_chunks)
+        self.assertEqual("3.1 General Requirements", body_chunks[0].section)
+        self.assertIn("Chapter 3: Foundations", body_chunks[0].section_path)
+        self.assertNotIn("Foundations9", body_chunks[0].text)
 
     def test_overlap_preserved_without_cross_section_metadata_leak(self) -> None:
         sec1 = " ".join(f"s1_{i}" for i in range(16))
