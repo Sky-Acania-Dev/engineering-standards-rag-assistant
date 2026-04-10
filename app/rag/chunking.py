@@ -381,12 +381,13 @@ def _iter_structured_blocks(document_text: str) -> list[_Block]:
                 content_type = "table"
                 protected = True
                 full_block, table_caption = _serialize_table_block(full_block)
-                table_id = _extract_numeric_id("Table", table_caption or full_block)
-                if table_caption and not table_id:
+                table_id = _extract_numeric_id("Table", table_caption) if table_caption else None
+                if not table_id:
                     table_id = f"table:p{page}" if page is not None else "table:unknown"
             elif all(line.startswith("|") for line in lines):
                 content_type = "table"
                 protected = True
+                table_id = f"table:p{page}" if page is not None else "table:unknown"
             elif (serialized := _serialize_unmarked_table(lines, page=page)) is not None:
                 content_type = "table"
                 protected = True
