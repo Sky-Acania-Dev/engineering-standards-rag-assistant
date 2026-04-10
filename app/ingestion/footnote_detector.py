@@ -74,7 +74,7 @@ def detect_superscript_anchors(tokens: list[LayoutToken], *, body_token_indexes:
             score += 0.35
         if 0 <= gap <= 3.5:
             score += 0.2
-        if score < 0.65:
+        if score < 0.25:
             rejected.append(RejectedAnchor(token_index=idx, reason="low_score"))
             continue
         anchors.append(
