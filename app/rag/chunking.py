@@ -380,7 +380,7 @@ def chunk_document_by_section(
 
     active_chapter: str | None = None
     active_section_heading: str | None = None
-    body_tokens: list[tuple[str, int | None]] = []
+    body_units: list[list[tuple[str, int | None]]] = []
     body_section = "Section 1"
     body_section_path: tuple[str, ...] = ()
     toc_buffer: list[_Block] = []
@@ -428,19 +428,19 @@ def chunk_document_by_section(
         toc_buffer = []
 
     def _flush_body_chunks() -> None:
-        nonlocal body_tokens, chunk_id
-        if not body_tokens:
+        nonlocal body_units, chunk_id
+        if not body_units:
             return
-        local_tokens = body_tokens
-        while local_tokens:
-            current = local_tokens[:chunk_size]
-            chunk_pages = [page for _, page in current if page is not None]
+
+        def emit_tokens(tokens: list[tuple[str, int | None]]) -> None:
+            nonlocal chunk_id
+            chunk_pages = [page for _, page in tokens if page is not None]
             chunks.append(
                 TextChunk(
                     chunk_id=chunk_id,
                     section=body_section,
-                    text=" ".join(token for token, _ in current),
-                    token_count=len(current),
+                    text=" ".join(token for token, _ in tokens),
+                    token_count=len(tokens),
                     page_start=chunk_pages[0] if chunk_pages else None,
                     page_end=chunk_pages[-1] if chunk_pages else None,
                     content_type="body_text",
@@ -448,19 +448,46 @@ def chunk_document_by_section(
                 )
             )
             chunk_id += 1
-            if len(local_tokens) <= chunk_size:
-                break
-            local_tokens = local_tokens[chunk_size - overlap :] if overlap else local_tokens[chunk_size:]
-        body_tokens = []
+
+        current: list[tuple[str, int | None]] = []
+        for unit in body_units:
+            unit_tokens = unit
+            if len(unit_tokens) > chunk_size:
+                if current:
+                    # Avoid emitting tiny heading-only chunks; attach heading prefix
+                    # to the first large paragraph and then split.
+                    if len(current) <= max(8, overlap // 2):
+                        unit_tokens = current + unit_tokens
+                        current = []
+                    else:
+                        emit_tokens(current)
+                        current = current[-overlap:] if overlap else []
+                while len(unit_tokens) > chunk_size:
+                    emit_tokens(unit_tokens[:chunk_size])
+                    unit_tokens = unit_tokens[chunk_size - overlap :] if overlap else unit_tokens[chunk_size:]
+                if unit_tokens:
+                    current = unit_tokens
+                continue
+
+            if current and len(current) + len(unit_tokens) > chunk_size:
+                emit_tokens(current)
+                current = current[-overlap:] if overlap else []
+            current.extend(unit_tokens)
+
+        if current:
+            emit_tokens(current)
+
+        body_units = []
 
     def _start_new_section(page: int | None) -> None:
-        nonlocal body_section, body_section_path, body_tokens
+        nonlocal body_section, body_section_path, body_units
         body_section, body_section_path = _current_section_metadata()
-        body_tokens = _body_heading_prefix(page)
+        prefix = _body_heading_prefix(page)
+        body_units = [prefix] if prefix else []
 
     for block in blocks:
         if block.content_type == "toc":
-            if body_tokens:
+            if body_units:
                 _flush_body_chunks()
             toc_buffer.append(block)
             continue
@@ -526,9 +553,9 @@ def chunk_document_by_section(
             chunk_id += 1
             continue
 
-        if not body_tokens:
+        if not body_units:
             _start_new_section(block.page_start)
-        body_tokens.extend((token, block.page_end) for token in block_tokens)
+        body_units.append([(token, block.page_end) for token in block_tokens])
 
     _emit_toc_buffer()
     _flush_body_chunks()

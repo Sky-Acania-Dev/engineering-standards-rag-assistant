@@ -440,6 +440,31 @@ but it should still be handled as body text.
         self.assertGreaterEqual(len(body_chunks), 1)
         self.assertEqual([], artifact_chunks)
 
+    def test_large_single_section_splits_by_paragraph_before_token_fallback(self) -> None:
+        paragraph1 = " ".join(f"p1_{i}" for i in range(320))
+        paragraph2 = " ".join(f"p2_{i}" for i in range(320))
+        paragraph3 = " ".join(f"p3_{i}" for i in range(320))
+        document = f"""## Page 8
+
+Chapter 6: Heating, Ventilation, and Air Conditioning Systems (HVAC)
+
+6.1 General Requirements
+
+{paragraph1}
+
+{paragraph2}
+
+{paragraph3}
+"""
+        chunks = chunk_document_by_section(document, chunk_size=700, overlap=50)
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+
+        self.assertGreaterEqual(len(body_chunks), 2)
+        self.assertTrue(any("p1_0" in chunk.text and "p2_0" in chunk.text for chunk in body_chunks))
+        self.assertTrue(any("p3_0" in chunk.text for chunk in body_chunks))
+        # Section metadata must remain stable for child chunks of the same large section.
+        self.assertTrue(all(chunk.section == "6.1 General Requirements" for chunk in body_chunks))
+
 
 if __name__ == "__main__":
     unittest.main()
