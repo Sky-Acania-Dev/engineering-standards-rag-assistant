@@ -490,6 +490,35 @@ Chapter 7: Roofing Systems and Attics
         self.assertTrue(any("c0" in chunk.text for chunk in body_chunks))
         self.assertTrue(all(chunk.token_count <= 875 for chunk in body_chunks))
 
+    def test_soft_and_hard_split_ratios_are_configurable(self) -> None:
+        paragraph1 = " ".join(f"m{i}" for i in range(60))
+        paragraph2 = " ".join(f"n{i}" for i in range(60))
+        paragraph3 = " ".join(f"o{i}" for i in range(60))
+        document = f"""## Page 2
+
+Chapter 2: Site Work
+
+2.1 General Requirements
+
+{paragraph1}
+
+{paragraph2}
+
+{paragraph3}
+"""
+        chunks = chunk_document_by_section(
+            document,
+            chunk_size=100,
+            overlap=20,
+            soft_split_ratio=0.6,
+            hard_split_ratio=1.1,
+        )
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+
+        self.assertGreaterEqual(len(body_chunks), 2)
+        # hard split ratio at 1.1 should cap growth before 110 tokens
+        self.assertTrue(all(chunk.token_count <= 110 for chunk in body_chunks))
+
 
 if __name__ == "__main__":
     unittest.main()

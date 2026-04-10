@@ -370,9 +370,15 @@ def chunk_document_by_section(
     *,
     chunk_size: int = 800,
     overlap: int = 150,
+    soft_split_ratio: float = 0.7,
+    hard_split_ratio: float = 1.25,
 ) -> list[TextChunk]:
     if chunk_size <= overlap:
         raise ValueError("chunk_size must be greater than overlap")
+    if not 0 < soft_split_ratio <= 1:
+        raise ValueError("soft_split_ratio must be in (0, 1]")
+    if hard_split_ratio < 1:
+        raise ValueError("hard_split_ratio must be >= 1")
 
     blocks = _iter_structured_blocks(document_text)
     chunks: list[TextChunk] = []
@@ -431,8 +437,8 @@ def chunk_document_by_section(
         nonlocal body_units, chunk_id
         if not body_units:
             return
-        soft_limit = max(1, int(chunk_size * 0.7))
-        hard_limit = max(chunk_size + 1, int(chunk_size * 1.25))
+        soft_limit = max(1, int(chunk_size * soft_split_ratio))
+        hard_limit = max(chunk_size + 1, int(chunk_size * hard_split_ratio))
 
         def emit_tokens(tokens: list[tuple[str, int | None]]) -> None:
             nonlocal chunk_id
@@ -472,13 +478,17 @@ def chunk_document_by_section(
                 continue
 
             projected = len(current) + len(unit_tokens)
-            if current and projected > hard_limit:
-                emit_tokens(current)
-                current = current[-overlap:] if overlap else []
-            elif current and projected > chunk_size and len(current) >= soft_limit:
+            if current and projected > chunk_size and len(current) >= soft_limit:
                 # Soft policy: prefer splitting at this paragraph boundary.
                 emit_tokens(current)
                 current = current[-overlap:] if overlap else []
+            elif current and projected > hard_limit:
+                # No section boundary was found by hard limit; fall back to
+                # normal target-sized split with overlap behavior.
+                merged = current + unit_tokens
+                emit_tokens(merged[:chunk_size])
+                current = merged[chunk_size - overlap :] if overlap else merged[chunk_size:]
+                continue
             current.extend(unit_tokens)
 
         if current:
