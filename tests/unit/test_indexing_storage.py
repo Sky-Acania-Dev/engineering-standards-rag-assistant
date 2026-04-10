@@ -332,13 +332,13 @@ class BuildIndexTests(unittest.TestCase):
             ]
             body = next(row for row in rows if row["content_type"] == "body_text" and row["section"] == "1.1 Definitions")
 
-            self.assertIn("[Footnote 1: URL]", body["text"])
-            self.assertIn("[Footnote 2: code reference]", body["text"])
-            self.assertIn("[Footnote 3:", body["text"])
+            self.assertIn("[fn:1]", body["text"])
+            self.assertIn("[fn:2]", body["text"])
+            self.assertIn("[fn:3]", body["text"])
             self.assertNotIn("1 https://example.org/spec", body["text"])
             self.assertEqual(3, len(body["footnotes"]))
-            self.assertEqual({"url", "citation", "explanatory"}, {item["type"] for item in body["footnotes"]})
-            self.assertTrue(any(item["inline_label"].endswith("...") for item in body["footnotes"] if item["type"] == "explanatory"))
+            self.assertTrue(all("anchor_text" in item for item in body["footnotes"]))
+            self.assertTrue(any(item.get("url") == "https://example.org/spec" for item in body["footnotes"]))
 
             window_rows = [row for row in rows if row["section"] == "10.5 Windows" and row["content_type"] == "body_text"]
             self.assertTrue(window_rows)

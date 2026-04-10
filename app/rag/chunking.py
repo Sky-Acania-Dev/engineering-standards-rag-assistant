@@ -5,6 +5,7 @@ import re
 from difflib import SequenceMatcher
 from typing import Any, Iterable
 
+from app.ingestion.footnote_resolver import resolve_footnotes_by_page
 
 @dataclass(frozen=True)
 class TextChunk:
@@ -38,14 +39,6 @@ class _Block:
     heading_level: int | None = None
     protected: bool = False
     footnotes: tuple[dict[str, Any], ...] = ()
-
-
-_FOOTNOTE_LINE_RE = re.compile(r"^(?P<id>\d{1,3})\s+(?P<text>.+)$")
-_URL_RE = re.compile(r"^(https?://\S+|www\.\S+)$", flags=re.IGNORECASE)
-_CITATION_RE = re.compile(
-    r"\b(irc|cfr|tac|hud|epa|usc|u\.s\.c|code|regulation|statute|admin(?:istrative)? code|§)\b",
-    flags=re.IGNORECASE,
-)
 
 
 def _tokenize(text: str) -> list[str]:
@@ -351,107 +344,10 @@ def _iter_structured_blocks(document_text: str) -> list[_Block]:
             return f"table:p{page}:{current}"
         return f"table:unknown:{current}"
 
-    def _extract_trailing_footnotes(lines: list[str]) -> tuple[list[str], tuple[dict[str, Any], ...]]:
-        if len(lines) < 2:
-            return lines, ()
-        start = len(lines)
-        while start > 0 and _FOOTNOTE_LINE_RE.match(lines[start - 1].strip()):
-            start -= 1
-        if start == len(lines) or start == 0:
-            return lines, ()
-
-        trailing_lines = lines[start:]
-        parsed_trailing: list[tuple[int, str]] = []
-        for raw in trailing_lines:
-            match = _FOOTNOTE_LINE_RE.match(raw.strip())
-            if not match:
-                continue
-            footnote_id = int(match.group("id"))
-            full_text = " ".join(match.group("text").split()).strip()
-            parsed_trailing.append((footnote_id, full_text))
-
-        if not parsed_trailing:
-            return lines, ()
-        # Guardrail: table rows/noisy numeric runs can look like "id text" at
-        # page end. Require prose-like or URL-like content in every candidate.
-        if any(
-            (
-                not text
-                or bool(re.fullmatch(r"[\d.\-–\s/%]+", text))
-                or ("|" in text)
-            )
-            for _, text in parsed_trailing
-        ):
-            return lines, ()
-
-        body_lines = lines[:start]
-        body_text = "\n".join(body_lines)
-        resolved: list[dict[str, Any]] = []
-
-        for footnote_id, full_text in parsed_trailing:
-
-            footnote_type = "explanatory"
-            inline_label = ""
-            url: str | None = None
-            if _URL_RE.fullmatch(full_text):
-                footnote_type = "url"
-                inline_label = "URL"
-                url = full_text
-            elif _CITATION_RE.search(full_text):
-                footnote_type = "citation"
-                inline_label = "code reference"
-            else:
-                clause = re.split(r"[.;:]", full_text, maxsplit=1)[0].strip()
-                clause = re.sub(
-                    r"^(this|that|these)\s+(requirement|provision|note)\s+(applies|is)\s+",
-                    "",
-                    clause,
-                    flags=re.IGNORECASE,
-                )
-                words = clause.split()
-                inline_label = " ".join(words[:8]).strip()
-                if len(words) > 8:
-                    inline_label = f"{inline_label}..."
-                if len(inline_label) > 64 and not inline_label.endswith("..."):
-                    inline_label = inline_label[:61].rstrip() + "..."
-
-            patch = f"[Footnote {footnote_id}: {inline_label}]"
-            patched = False
-            for pattern in (
-                re.compile(rf"\[{footnote_id}\]"),
-                re.compile(rf"\({footnote_id}\)"),
-                re.compile(rf"(?<=\\w){footnote_id}(?=[\\s,.;:])"),
-                re.compile(rf"\b{footnote_id}\b"),
-            ):
-                body_text, count = pattern.subn(f" {patch}", body_text, count=1)
-                if count:
-                    patched = True
-                    break
-            if not patched and body_text.strip():
-                body_text = f"{body_text} {patch}".strip()
-
-            entry: dict[str, Any] = {
-                "id": footnote_id,
-                "type": footnote_type,
-                "full_text": full_text,
-                "inline_label": inline_label,
-            }
-            if url is not None:
-                entry["url"] = url
-            resolved.append(entry)
-
-        stripped_lines = [line for line in body_text.splitlines() if line.strip()]
-        return stripped_lines, tuple(resolved)
-
     def _append_content_block(lines: list[str], *, force_content_type: str | None = None) -> None:
         nonlocal pending_image_ref
         if not lines:
             return
-        resolved_footnotes: tuple[dict[str, Any], ...] = ()
-        if force_content_type is None:
-            lines, resolved_footnotes = _extract_trailing_footnotes(lines)
-            if not lines:
-                return
         if (
             force_content_type is None
             and not lines[0].startswith("[TABLE]")
@@ -533,7 +429,6 @@ def _iter_structured_blocks(document_text: str) -> list[_Block]:
                 figure_id=figure_id,
                 figure_ref=figure_ref,
                 protected=protected,
-                footnotes=resolved_footnotes,
             )
         )
 
@@ -644,9 +539,35 @@ def chunk_document_by_section(
     if hard_split_ratio < 1:
         raise ValueError("hard_split_ratio must be >= 1")
 
-    blocks = _iter_structured_blocks(document_text)
+    resolved_document = resolve_footnotes_by_page(document_text)
+    blocks = _iter_structured_blocks(resolved_document.text)
     chunks: list[TextChunk] = []
     chunk_id = 0
+    page_footnotes = resolved_document.page_footnotes
+
+    def _footnotes_for_chunk(text: str, page_start: int | None, page_end: int | None) -> tuple[dict[str, Any], ...]:
+        ids = {int(m.group(1)) for m in re.finditer(r"\[fn:(\d{1,3})\]", text)}
+        if not ids:
+            return ()
+        pages: set[int] = set()
+        if page_start is not None and page_end is not None:
+            pages.update(range(page_start, page_end + 1))
+        elif page_start is not None:
+            pages.add(page_start)
+        elif page_end is not None:
+            pages.add(page_end)
+        else:
+            pages.update(page_footnotes)
+        matches: list[dict[str, Any]] = []
+        seen: set[tuple[int, str]] = set()
+        for page in sorted(pages):
+            for entry in page_footnotes.get(page, ()):
+                entry_id = entry.get("id")
+                anchor = str(entry.get("anchor_text", ""))
+                if isinstance(entry_id, int) and entry_id in ids and (entry_id, anchor) not in seen:
+                    matches.append(entry)
+                    seen.add((entry_id, anchor))
+        return tuple(matches)
 
     active_chapter: str | None = None
     active_section_heading: str | None = None
@@ -709,17 +630,23 @@ def chunk_document_by_section(
         def emit_tokens(tokens: list[tuple[str, int | None]], footnotes: tuple[dict[str, Any], ...]) -> None:
             nonlocal chunk_id
             chunk_pages = [page for _, page in tokens if page is not None]
+            text = " ".join(token for token, _ in tokens)
+            derived_footnotes = _footnotes_for_chunk(
+                text,
+                chunk_pages[0] if chunk_pages else None,
+                chunk_pages[-1] if chunk_pages else None,
+            )
             chunks.append(
                 TextChunk(
                     chunk_id=chunk_id,
                     section=body_section,
-                    text=" ".join(token for token, _ in tokens),
+                    text=text,
                     token_count=len(tokens),
                     page_start=chunk_pages[0] if chunk_pages else None,
                     page_end=chunk_pages[-1] if chunk_pages else None,
                     content_type="body_text",
                     section_path=body_section_path,
-                    footnotes=footnotes,
+                    footnotes=derived_footnotes or footnotes,
                 )
             )
             chunk_id += 1

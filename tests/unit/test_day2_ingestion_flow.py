@@ -581,10 +581,9 @@ See implementation guidance1 before proceeding.
         body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
 
         self.assertEqual(1, len(body_chunks))
-        self.assertIn("[Footnote 1: URL]", body_chunks[0].text)
-        self.assertNotIn("https://example.org/guidance", body_chunks[0].text)
+        self.assertIn("[fn:1]", body_chunks[0].text)
         self.assertNotIn("1 https://example.org/guidance", body_chunks[0].text)
-        self.assertEqual("url", body_chunks[0].footnotes[0]["type"])
+        self.assertIn("https://example.org/guidance", body_chunks[0].footnotes[0]["content"])
         self.assertEqual("https://example.org/guidance", body_chunks[0].footnotes[0]["url"])
 
     def test_citation_footnote_uses_stable_code_reference_label(self) -> None:
@@ -596,10 +595,8 @@ Comply with the cited authority2 for this section.
         chunks = chunk_document_by_section(document, chunk_size=120, overlap=20)
         body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
 
-        self.assertIn("[Footnote 2: code reference]", body_chunks[0].text)
-        self.assertEqual("citation", body_chunks[0].footnotes[0]["type"])
-        self.assertEqual("code reference", body_chunks[0].footnotes[0]["inline_label"])
-        self.assertIn("24 CFR 92.251", body_chunks[0].footnotes[0]["full_text"])
+        self.assertIn("[fn:2]", body_chunks[0].text)
+        self.assertIn("24 CFR 92.251", body_chunks[0].footnotes[0]["content"])
 
     def test_explanatory_footnote_is_rule_compressed_and_truncated(self) -> None:
         document = """## Page 1
@@ -610,9 +607,8 @@ Follow this requirement3 for the project scope.
         chunks = chunk_document_by_section(document, chunk_size=120, overlap=20)
         body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
 
-        self.assertIn("[Footnote 3: Additional guidance is available from the Texas Historical...]", body_chunks[0].text)
-        self.assertEqual("explanatory", body_chunks[0].footnotes[0]["type"])
-        self.assertTrue(body_chunks[0].footnotes[0]["full_text"].startswith("Additional guidance is available"))
+        self.assertIn("[fn:3]", body_chunks[0].text)
+        self.assertTrue(body_chunks[0].footnotes[0]["content"].startswith("Additional guidance is available"))
 
     def test_ip_like_decimal_strings_are_not_treated_as_headings(self) -> None:
         document = """## Page 1
@@ -628,6 +624,48 @@ Continuation remains under Windows.
         self.assertTrue(all(chunk.section == "10.5 Windows" for chunk in body_chunks))
         self.assertFalse(any(chunk.section.startswith("10.0.0.1") for chunk in chunks))
         self.assertFalse(any(chunk.section.startswith("10.1.1.1") for chunk in chunks))
+
+    def test_cross_page_footnote_resolves_before_chunking(self) -> None:
+        document = """## Page 1
+1.1 Definitions
+Requirement text references Rule3 and remains long enough to split across chunks.
+""" + " ".join("contextword" for _ in range(120)) + """
+
+## Page 2
+3 https://example.org/rule-3
+"""
+        chunks = chunk_document_by_section(document, chunk_size=40, overlap=5)
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+        joined = " ".join(chunk.text for chunk in body_chunks)
+        self.assertIn("Rule [fn:3]", joined)
+        self.assertNotIn("3 https://example.org/rule-3", joined)
+        self.assertTrue(any(any(fn["id"] == 3 for fn in chunk.footnotes) for chunk in body_chunks))
+
+    def test_title_corruption_and_token_merge_are_repaired(self) -> None:
+        document = """## Page 1
+Chapter 21 23
+R80219 and Rule3 must comply.
+3 note for rule 3
+19 note for code 19
+23 note for chapter title
+"""
+        chunks = chunk_document_by_section(document, chunk_size=120, overlap=20)
+        text = " ".join(chunk.text for chunk in chunks if chunk.content_type == "body_text")
+        self.assertIn("Chapter 21: [fn:23]", text)
+        self.assertIn("R802 [fn:19]", text)
+        self.assertIn("Rule [fn:3]", text)
+
+    def test_multiple_references_expand_ranges(self) -> None:
+        document = """## Page 1
+1.1 Definitions
+See references 8-9,18 for details.
+8 ref eight
+9 ref nine
+18 ref eighteen
+"""
+        chunks = chunk_document_by_section(document, chunk_size=120, overlap=20)
+        text = " ".join(chunk.text for chunk in chunks if chunk.content_type == "body_text")
+        self.assertIn("[fn:8][fn:9][fn:18]", text)
 
     def test_overlap_preserved_without_cross_section_metadata_leak(self) -> None:
         sec1 = " ".join(f"s1_{i}" for i in range(16))
