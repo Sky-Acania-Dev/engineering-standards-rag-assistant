@@ -142,6 +142,41 @@ class BuildIndexTests(unittest.TestCase):
             manifest = json.loads((output_dir / "index_manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(stats, manifest)
 
+    def test_build_index_persists_table_chunks_in_jsonl(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_dir = Path(temp_dir) / "input"
+            output_dir = Path(temp_dir) / "output"
+            input_dir.mkdir(parents=True)
+            (input_dir / "table_case.txt").write_text(
+                "\n".join(
+                    [
+                        "## Page 7",
+                        "",
+                        "Chapter 10: Windows",
+                        "",
+                        "10.5 Windows",
+                        "",
+                        "Performance Measure  CZ2  CZ3  CZ4",
+                        "U-Factor             0.40 0.35 0.30",
+                        "SHGC                 0.25 0.25 0.25",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            build_index(input_dir=str(input_dir), output_dir=str(output_dir), embedding_dimension=16)
+
+            rows = [
+                json.loads(line)
+                for line in (output_dir / "chunk_store.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            table_rows = [row for row in rows if row["content_type"] == "table"]
+
+            self.assertEqual(1, len(table_rows))
+            self.assertEqual("table:p7", table_rows[0]["table_id"])
+            self.assertIn("| Performance Measure | CZ2 | CZ3 | CZ4 |", table_rows[0]["text"])
+
 
 if __name__ == "__main__":
     unittest.main()

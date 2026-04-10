@@ -20,7 +20,7 @@ def _extract_structured_page_text(page: Any, page_number: int) -> str:
 
     if text:
         for raw_line in text.splitlines():
-            line = " ".join(raw_line.split())
+            line = raw_line.strip()
             if not line:
                 continue
             if line.isupper() and len(line.split()) <= 14:

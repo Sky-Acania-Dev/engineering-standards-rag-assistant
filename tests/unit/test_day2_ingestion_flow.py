@@ -235,6 +235,48 @@ Note: Keep spacing.
         self.assertTrue(any(c.section_path for c in body_chunks))
         self.assertTrue(any(c.prev_chunk_id is not None or c.next_chunk_id is not None for c in chunks))
 
+    def test_chunking_preserves_unmarked_windows_style_table(self) -> None:
+        document = """## Page 40
+
+Chapter 10: Windows
+
+10.5 Windows
+
+Window requirements apply.
+
+Performance Measure  CZ2  CZ3  CZ4
+U-Factor             0.40 0.35 0.30
+SHGC                 0.25 0.25 0.25
+"""
+        chunks = chunk_document_by_section(document, chunk_size=120, overlap=20)
+        table_chunks = [c for c in chunks if c.content_type == "table"]
+
+        self.assertEqual(1, len(table_chunks))
+        self.assertEqual("table:p40", table_chunks[0].table_id)
+        self.assertIn("| Performance Measure | CZ2 | CZ3 | CZ4 |", table_chunks[0].text)
+        self.assertIn("| U-Factor | 0.40 | 0.35 | 0.30 |", table_chunks[0].text)
+        self.assertEqual("10.5 Windows", table_chunks[0].section)
+
+    def test_chunking_preserves_unmarked_dwh_energy_factor_table(self) -> None:
+        document = """## Page 21
+
+Chapter 5: Plumbing
+
+5.7 Domestic Water Heaters (DWH)
+
+Storage Size in Gallons  Gas DWH EF  Electric DWH EF
+20                       0.58        0.92
+40                       0.62        0.95
+"""
+        chunks = chunk_document_by_section(document, chunk_size=120, overlap=20)
+        table_chunks = [c for c in chunks if c.content_type == "table"]
+
+        self.assertEqual(1, len(table_chunks))
+        self.assertEqual("table:p21", table_chunks[0].table_id)
+        self.assertIn("| Storage Size in Gallons | Gas DWH EF | Electric DWH EF |", table_chunks[0].text)
+        self.assertIn("| 40 | 0.62 | 0.95 |", table_chunks[0].text)
+        self.assertEqual("5.7 Domestic Water Heaters (DWH)", table_chunks[0].section)
+
     def test_multi_page_toc_is_preserved_and_not_mixed_with_body(self) -> None:
         document = """## Page 2
 
@@ -457,6 +499,51 @@ Additional body text remains in the same section.
         self.assertTrue(body_chunks)
         self.assertTrue(all(chunk.section == "Section 1" for chunk in body_chunks))
         self.assertTrue(any("2.7 Ramps If installed" in chunk.text for chunk in body_chunks))
+
+    def test_short_token_tmcs_is_not_treated_as_heading(self) -> None:
+        document = """## Page 1
+1.8 Existing Structures
+General requirements for existing structures.
+TMCS.
+Additional continuation text.
+"""
+        chunks = chunk_document_by_section(document, chunk_size=120, overlap=20)
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+
+        self.assertTrue(body_chunks)
+        self.assertTrue(all(chunk.section == "1.8 Existing Structures" for chunk in body_chunks))
+        self.assertFalse(any(chunk.section == "TMCS." for chunk in chunks))
+        self.assertTrue(any("TMCS." in chunk.text for chunk in body_chunks))
+
+    def test_url_fragment_and_footnote_spillover_do_not_create_section(self) -> None:
+        document = """## Page 1
+1.9 Egress
+Means of egress shall remain unobstructed.
+8 https://example.org/standards/tmcs
+P-2009-000019
+"""
+        chunks = chunk_document_by_section(document, chunk_size=120, overlap=20)
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+
+        self.assertTrue(body_chunks)
+        self.assertTrue(all(chunk.section == "1.9 Egress" for chunk in body_chunks))
+        self.assertFalse(any(chunk.section in {"P-2009-000019", "TDHCA.", "TMCS."} for chunk in chunks))
+        self.assertTrue(any("P-2009-000019" in chunk.text for chunk in body_chunks))
+
+    def test_sentence_continuation_decimal_line_is_not_heading(self) -> None:
+        document = """## Page 1
+10.5 Windows
+Window requirements apply.
+745.2 Federally funded Rehabilitations shall also comply with all local and federal guidance.
+This continuation must stay in section 10.5.
+"""
+        chunks = chunk_document_by_section(document, chunk_size=120, overlap=20)
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+
+        self.assertTrue(body_chunks)
+        self.assertTrue(all(chunk.section == "10.5 Windows" for chunk in body_chunks))
+        self.assertFalse(any(chunk.section.startswith("745.2 Federally funded") for chunk in chunks))
+        self.assertTrue(any("745.2 Federally funded" in chunk.text for chunk in body_chunks))
 
     def test_overlap_preserved_without_cross_section_metadata_leak(self) -> None:
         sec1 = " ".join(f"s1_{i}" for i in range(16))

@@ -43,9 +43,9 @@ def _tokenize(text: str) -> list[str]:
 
 
 def _normalize_line_noise(line: str) -> str:
-    cleaned = " ".join(line.split())
+    cleaned = line.strip()
     cleaned = re.sub(r"\b(\d+)\s*\|\s*P\s*a\s*g\s*e\b", r"Page \1", cleaned, flags=re.IGNORECASE)
-    return cleaned.strip()
+    return cleaned
 
 
 def _looks_like_toc_line(line: str) -> bool:
@@ -142,7 +142,21 @@ def _normalize_heading_text(text: str) -> str:
 def _detect_structural_heading(line: str) -> tuple[int, str] | None:
     markdown_heading = re.match(r"^(#{1,6})\s+(.+)$", line)
     if markdown_heading:
-        return len(markdown_heading.group(1)), _normalize_heading_text(markdown_heading.group(2))
+        # Markdown markers are parser hints. Only treat them as structural
+        # sections if the embedded text matches known heading patterns.
+        inner = markdown_heading.group(2).strip()
+        detected = _detect_structural_heading(inner)
+        if detected is not None:
+            return detected
+        normalized = _normalize_heading_text(inner)
+        if (
+            len(normalized.split()) >= 2
+            and not re.fullmatch(r"[A-Z]{2,}\.?", normalized)
+            and "http://" not in normalized.lower()
+            and "https://" not in normalized.lower()
+        ):
+            return len(markdown_heading.group(1)), normalized
+        return None
 
     chapter_heading = re.match(
         r"^(chapter)\s+(\d+[A-Za-z]?)\s*[:.\-–]?\s*(.+)?$",
@@ -168,7 +182,7 @@ def _detect_structural_heading(line: str) -> tuple[int, str] | None:
             heading = f"{heading}: {section_title}"
         return 2, _normalize_heading_text(heading)
 
-    decimal_heading = re.match(r"^(\d+(?:\.\d+){1,3})\s+(.+)$", line)
+    decimal_heading = re.match(r"^(\d{1,2}(?:\.\d+){1,3})\s+(.+)$", line)
     if decimal_heading:
         depth = decimal_heading.group(1).count(".") + 3
         heading = f"{decimal_heading.group(1)} {decimal_heading.group(2)}"
@@ -205,12 +219,64 @@ def _is_standalone_heading_line(line: str) -> bool:
         return False
     if "http://" in compact.lower() or "https://" in compact.lower():
         return False
+    if re.search(r"\bwww\.", compact, flags=re.IGNORECASE):
+        return False
+    if re.fullmatch(r"[A-Z]{2,}\.?", compact):
+        return False
+    if re.fullmatch(r"[A-Z]-\d{4}-\d{3,}", compact):
+        return False
     token_count = len(compact.split())
     if token_count > 14:
+        return False
+    if token_count <= 2 and compact.endswith("."):
+        return False
+    if token_count > 7 and re.search(r"\b(shall|must|comply|provided|required)\b", compact, flags=re.IGNORECASE):
         return False
     if re.search(r"[!?;]", compact):
         return False
     return True
+
+
+def _table_row_cells(line: str) -> list[str] | None:
+    if "|" in line:
+        cells = [cell.strip() for cell in line.split("|") if cell.strip()]
+        return cells or None
+    cells = [cell.strip() for cell in re.split(r"\s{2,}", line) if cell.strip()]
+    if len(cells) >= 2:
+        return cells
+    return None
+
+
+def _serialize_unmarked_table(lines: list[str], *, page: int | None) -> tuple[str, str | None] | None:
+    header = _table_row_cells(lines[0]) if lines else None
+    if header is None:
+        return None
+    column_count = len(header)
+    if column_count < 2:
+        return None
+    rows: list[list[str]] = [header]
+
+    for line in lines[1:]:
+        cells = _table_row_cells(line)
+        if cells is None:
+            return None
+        # Common PDF artifact: first column is separated by wide spaces, while
+        # trailing numeric columns collapse to single spaces.
+        if len(cells) < column_count and cells:
+            expanded_tail = cells[-1].split()
+            if len(cells[:-1]) + len(expanded_tail) == column_count:
+                cells = cells[:-1] + expanded_tail
+        rows.append(cells)
+
+    if len(rows) < 3:
+        return None
+    if any(len(row) != column_count for row in rows):
+        return None
+
+    separator = "| " + " | ".join("---" for _ in header) + " |"
+    rendered = ["| " + " | ".join(header) + " |", separator]
+    rendered.extend("| " + " | ".join(row) + " |" for row in rows[1:])
+    return "\n".join(rendered), f"table:p{page}" if page is not None else "table:unknown"
 
 
 def _iter_structured_blocks(document_text: str) -> list[_Block]:
@@ -269,6 +335,10 @@ def _iter_structured_blocks(document_text: str) -> list[_Block]:
             elif all(line.startswith("|") for line in lines):
                 content_type = "table"
                 protected = True
+            elif (serialized := _serialize_unmarked_table(lines, page=page)) is not None:
+                content_type = "table"
+                protected = True
+                full_block, table_id = serialized
             elif _is_note_block(full_block):
                 content_type = "note"
                 protected = True
