@@ -4,11 +4,52 @@ import unittest
 
 from app.ingestion.footnote_detector import analyze_page_layout
 from app.ingestion.footnote_linker import link_anchors_to_bodies
-from app.ingestion.pdf_layout_extractor import LayoutToken
+from app.ingestion.pdf_layout_extractor import LayoutToken, tokens_from_pdfplumber_words
 from app.ingestion.text_normalizer import render_page_text_with_footnotes
 
 
 class FootnoteLayoutPipelineTests(unittest.TestCase):
+    def test_word_extractor_splits_superscript_suffix_from_word(self) -> None:
+        class _Page:
+            def extract_words(self, **_: object) -> list[dict[str, object]]:
+                return [
+                    {"text": "Requirements1", "x0": 10.0, "x1": 80.0, "top": 100.0, "bottom": 112.0, "size": 12.0, "fontname": "A"}
+                ]
+
+            chars = [
+                {"text": "R", "x0": 10.0, "x1": 14.0, "top": 100.0, "bottom": 112.0, "size": 12.0},
+                {"text": "e", "x0": 14.0, "x1": 18.0, "top": 100.0, "bottom": 112.0, "size": 12.0},
+                {"text": "q", "x0": 18.0, "x1": 22.0, "top": 100.0, "bottom": 112.0, "size": 12.0},
+                {"text": "u", "x0": 22.0, "x1": 26.0, "top": 100.0, "bottom": 112.0, "size": 12.0},
+                {"text": "i", "x0": 26.0, "x1": 28.0, "top": 100.0, "bottom": 112.0, "size": 12.0},
+                {"text": "r", "x0": 28.0, "x1": 32.0, "top": 100.0, "bottom": 112.0, "size": 12.0},
+                {"text": "e", "x0": 32.0, "x1": 36.0, "top": 100.0, "bottom": 112.0, "size": 12.0},
+                {"text": "m", "x0": 36.0, "x1": 42.0, "top": 100.0, "bottom": 112.0, "size": 12.0},
+                {"text": "e", "x0": 42.0, "x1": 46.0, "top": 100.0, "bottom": 112.0, "size": 12.0},
+                {"text": "n", "x0": 46.0, "x1": 50.0, "top": 100.0, "bottom": 112.0, "size": 12.0},
+                {"text": "t", "x0": 50.0, "x1": 54.0, "top": 100.0, "bottom": 112.0, "size": 12.0},
+                {"text": "s", "x0": 54.0, "x1": 58.0, "top": 100.0, "bottom": 112.0, "size": 12.0},
+                {"text": "1", "x0": 58.0, "x1": 60.0, "top": 96.0, "bottom": 103.0, "size": 8.0},
+            ]
+
+        tokens = tokens_from_pdfplumber_words(_Page(), 1)
+        self.assertEqual(["Requirements", "1"], [t.text for t in tokens])
+
+    def test_word_extractor_does_not_split_regular_numeric_token(self) -> None:
+        class _Page:
+            def extract_words(self, **_: object) -> list[dict[str, object]]:
+                return [{"text": "2306", "x0": 10.0, "x1": 30.0, "top": 100.0, "bottom": 112.0, "size": 12.0, "fontname": "A"}]
+
+            chars = [
+                {"text": "2", "x0": 10.0, "x1": 14.0, "top": 100.0, "bottom": 112.0, "size": 12.0},
+                {"text": "3", "x0": 14.0, "x1": 18.0, "top": 100.0, "bottom": 112.0, "size": 12.0},
+                {"text": "0", "x0": 18.0, "x1": 22.0, "top": 100.0, "bottom": 112.0, "size": 12.0},
+                {"text": "6", "x0": 22.0, "x1": 26.0, "top": 100.0, "bottom": 112.0, "size": 12.0},
+            ]
+
+        tokens = tokens_from_pdfplumber_words(_Page(), 1)
+        self.assertEqual(["2306"], [t.text for t in tokens])
+
     def test_detects_real_superscript_anchor_and_links_body(self) -> None:
         tokens = [
             LayoutToken(page=1, text="Requirements", x0=10, x1=70, top=100, bottom=112, size=12, fontname="A", line_id=100, reading_order=0),
