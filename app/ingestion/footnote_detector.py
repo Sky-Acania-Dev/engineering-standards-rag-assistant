@@ -66,9 +66,9 @@ def detect_superscript_anchors(tokens: list[LayoutToken], *, body_token_indexes:
             rejected.append(RejectedAnchor(token_index=idx, reason="protected_token_neighbor"))
             continue
         size_ratio = (token.size / prev.size) if prev.size > 0 else 1.0
-        raised = token.top + 0.5 < prev.top
+        raised = token.top + 0.2 < prev.top
         score = 0.0
-        if size_ratio <= 0.82:
+        if size_ratio <= 0.92:
             score += 0.45
         if raised:
             score += 0.35
