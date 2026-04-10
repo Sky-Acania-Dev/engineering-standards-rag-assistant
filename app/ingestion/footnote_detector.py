@@ -68,7 +68,7 @@ def detect_superscript_anchors(tokens: list[LayoutToken], *, body_token_indexes:
             score += 0.35
         if 0 <= gap <= 3.5:
             score += 0.2
-        if score < 0.8:
+        if score < 0.65:
             rejected.append(RejectedAnchor(token_index=idx, reason="low_score"))
             continue
         anchors.append(
@@ -135,7 +135,7 @@ def analyze_page_layout(tokens: list[LayoutToken], *, page_height: float) -> Pag
         if (
             line[0].top >= page_height * 0.78
             and re.fullmatch(r"\d{1,3}", first)
-            and (median_size == 0 or avg_size <= median_size * 0.95)
+            and (median_size == 0 or avg_size <= median_size * 1.05)
         ):
             for idx, _ in indexed:
                 footnote_token_indexes.add(idx)

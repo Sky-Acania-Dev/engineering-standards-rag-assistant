@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+import os
 import sys
 from pathlib import Path
 
@@ -50,6 +52,8 @@ def build_index(
     embedding_model: str | None = None,
     embedder: Embedder | None = None,
 ) -> dict[str, int | str]:
+    if os.getenv("PDF_FOOTNOTE_DEBUG", "0") == "1":
+        logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     documents = _collect_documents(input_dir)
     ingestion_results = ingest_documents(
         documents,

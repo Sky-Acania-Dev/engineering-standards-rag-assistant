@@ -99,10 +99,14 @@ def _extract_structured_page_text_pdfplumber(page: Any, page_number: int) -> str
             len(analysis.rejected_anchors),
         )
         if os.getenv("PDF_FOOTNOTE_DEBUG", "0") == "1":
-            logger.debug("footnote_anchors page=%s data=%s", page_number, [a.__dict__ for a in analysis.anchor_candidates])
-            logger.debug("footnote_bodies page=%s data=%s", page_number, {k: v.__dict__ for k, v in analysis.footnote_bodies.items()})
-            logger.debug("footnote_rejected page=%s data=%s", page_number, [r.__dict__ for r in analysis.rejected_anchors])
-            logger.debug("footnote_links page=%s data=%s", page_number, [l.__dict__ for l in links])
+            debug_payload = {
+                "page": page_number,
+                "anchors": [a.__dict__ for a in analysis.anchor_candidates],
+                "bodies": {k: v.__dict__ for k, v in analysis.footnote_bodies.items()},
+                "rejected": [r.__dict__ for r in analysis.rejected_anchors],
+                "links": [l.__dict__ for l in links],
+            }
+            logger.info("PDF_FOOTNOTE_DEBUG %s", debug_payload)
         page_text_lines = [line for line in rendered_lines if line.strip()]
         for entry in footnote_meta:
             lines.append(f"[FOOTNOTE_DEF] {entry['id']}|{entry['anchor_text']}|{entry['content']}")
