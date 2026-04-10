@@ -47,10 +47,10 @@ class Day2IngestionFlowTests(unittest.TestCase):
         chunks = chunk_document_by_section(document, chunk_size=800, overlap=150)
 
         self.assertGreaterEqual(len(chunks), 4)
-        self.assertTrue(all(chunk.section in {"Chapter 1 Intro", "Section 2.0 Limits"} for chunk in chunks))
+        self.assertTrue(all(chunk.section in {"Chapter 1: Intro", "Section 2.0: Limits"} for chunk in chunks))
         self.assertTrue(all(chunk.token_count <= 800 for chunk in chunks))
 
-        chapter_chunks = [c for c in chunks if c.section == "Chapter 1 Intro"]
+        chapter_chunks = [c for c in chunks if c.section == "Chapter 1: Intro"]
         self.assertGreaterEqual(len(chapter_chunks), 2)
         first_tokens = chapter_chunks[0].text.split()
         second_tokens = chapter_chunks[1].text.split()
@@ -301,9 +301,48 @@ lambda mu nu xi omicron pi rho sigma tau upsilon
         chunks = chunk_document_by_section(document, chunk_size=8, overlap=2)
         body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
 
-        self.assertTrue(any(chunk.section == "Chapter 1 First" for chunk in body_chunks))
-        self.assertTrue(any(chunk.section == "Chapter 2 Second" for chunk in body_chunks))
-        self.assertTrue(any("Chapter 2 Second" in chunk.section_path for chunk in body_chunks))
+        self.assertTrue(any(chunk.section == "Chapter 1: First" for chunk in body_chunks))
+        self.assertTrue(any(chunk.section == "Chapter 2: Second" for chunk in body_chunks))
+        self.assertTrue(any("Chapter 2: Second" in chunk.section_path for chunk in body_chunks))
+        chapter1_chunks = [chunk for chunk in body_chunks if chunk.section == "Chapter 1: First"]
+        chapter2_chunks = [chunk for chunk in body_chunks if chunk.section == "Chapter 2: Second"]
+        self.assertTrue(chapter1_chunks)
+        self.assertTrue(chapter2_chunks)
+        self.assertTrue(all("Chapter 2" not in chunk.text for chunk in chapter1_chunks))
+
+    def test_new_chapter_heading_forces_chunk_boundary(self) -> None:
+        document = """## Page 1
+
+Chapter 1: Alpha
+
+one two three four five six seven eight nine ten
+
+Chapter 2: Beta
+
+eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty
+"""
+        chunks = chunk_document_by_section(document, chunk_size=9, overlap=3)
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+        chapter1_chunks = [chunk for chunk in body_chunks if chunk.section == "Chapter 1: Alpha"]
+        chapter2_chunks = [chunk for chunk in body_chunks if chunk.section == "Chapter 2: Beta"]
+
+        self.assertTrue(chapter1_chunks)
+        self.assertTrue(chapter2_chunks)
+        self.assertTrue(all("Chapter 2: Beta" not in chunk.text for chunk in chapter1_chunks))
+
+    def test_malformed_heading_text_is_normalized(self) -> None:
+        document = """## Page 1
+
+5.4 Water Supply5
+
+All fixtures must be pressure tested.
+"""
+        chunks = chunk_document_by_section(document, chunk_size=60, overlap=10)
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+
+        self.assertTrue(body_chunks)
+        self.assertEqual("5.4 Water Supply", body_chunks[0].section)
+        self.assertIn("5.4 Water Supply", body_chunks[0].section_path)
 
     def test_overlap_preserved_without_cross_section_metadata_leak(self) -> None:
         sec1 = " ".join(f"s1_{i}" for i in range(16))
@@ -322,8 +361,8 @@ Chapter 2 Second
 """
 
         chunks = chunk_document_by_section(document, chunk_size=10, overlap=4)
-        sec1_chunks = [chunk for chunk in chunks if chunk.section == "Chapter 1 First" and chunk.content_type == "body_text"]
-        sec2_chunks = [chunk for chunk in chunks if chunk.section == "Chapter 2 Second" and chunk.content_type == "body_text"]
+        sec1_chunks = [chunk for chunk in chunks if chunk.section == "Chapter 1: First" and chunk.content_type == "body_text"]
+        sec2_chunks = [chunk for chunk in chunks if chunk.section == "Chapter 2: Second" and chunk.content_type == "body_text"]
 
         self.assertGreaterEqual(len(sec1_chunks), 2)
         self.assertGreaterEqual(len(sec2_chunks), 2)

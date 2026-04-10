@@ -34,6 +34,7 @@ class _Block:
     table_id: str | None = None
     figure_id: str | None = None
     figure_ref: str | None = None
+    heading_level: int | None = None
     protected: bool = False
 
 
@@ -135,19 +136,47 @@ def _update_heading_stack(
     return heading_text, tuple(title for _, title in heading_stack)
 
 
+def _normalize_heading_text(text: str) -> str:
+    cleaned = " ".join(text.split())
+    # OCR/extraction artifacts often append page digits directly to the heading.
+    cleaned = re.sub(r"(?<=[A-Za-z])\d{1,4}$", "", cleaned).strip()
+    return cleaned
+
+
 def _detect_structural_heading(line: str) -> tuple[int, str] | None:
     markdown_heading = re.match(r"^(#{1,6})\s+(.+)$", line)
     if markdown_heading:
-        return len(markdown_heading.group(1)), markdown_heading.group(2).strip()
+        return len(markdown_heading.group(1)), _normalize_heading_text(markdown_heading.group(2))
 
-    chapter_heading = re.match(r"^(Chapter\s+\d+.*|Section\s+[\w.\-]+.*)$", line, flags=re.IGNORECASE)
+    chapter_heading = re.match(
+        r"^(chapter)\s+(\d+[A-Za-z]?)\s*[:.\-–]?\s*(.+)?$",
+        line,
+        flags=re.IGNORECASE,
+    )
     if chapter_heading:
-        return 2, line.strip()
+        chapter_label = chapter_heading.group(1).capitalize()
+        chapter_number = chapter_heading.group(2)
+        chapter_title = (chapter_heading.group(3) or "").strip()
+        heading = f"{chapter_label} {chapter_number}"
+        if chapter_title:
+            heading = f"{heading}: {chapter_title}"
+        return 2, _normalize_heading_text(heading)
+
+    section_heading = re.match(r"^(section)\s+([\w.\-]+)\s*[:.\-–]?\s*(.+)?$", line, flags=re.IGNORECASE)
+    if section_heading:
+        section_label = section_heading.group(1).capitalize()
+        section_number = section_heading.group(2)
+        section_title = (section_heading.group(3) or "").strip()
+        heading = f"{section_label} {section_number}"
+        if section_title:
+            heading = f"{heading}: {section_title}"
+        return 2, _normalize_heading_text(heading)
 
     decimal_heading = re.match(r"^(\d+(?:\.\d+){1,3})\s+(.+)$", line)
     if decimal_heading:
         depth = decimal_heading.group(1).count(".") + 3
-        return min(depth, 6), line.strip()
+        heading = f"{decimal_heading.group(1)} {decimal_heading.group(2)}"
+        return min(depth, 6), _normalize_heading_text(heading)
 
     return None
 
@@ -202,6 +231,7 @@ def _iter_structured_blocks(document_text: str) -> list[_Block]:
                     page_end=page,
                     section=section,
                     section_path=section_path,
+                    heading_level=level,
                     protected=True,
                 )
             )
@@ -332,6 +362,8 @@ def chunk_document_by_section(
     chunks: list[TextChunk] = []
     chunk_id = 0
     buffer_tokens: list[_BufferToken] = []
+    active_section = "Section 1"
+    active_section_path: tuple[str, ...] = ()
 
     def _emit_chunk_from_tokens(tokens: list[_BufferToken]) -> None:
         nonlocal chunk_id
@@ -375,6 +407,10 @@ def chunk_document_by_section(
 
     for block in blocks:
         if block.content_type == "section_header":
+            # Structural anchor: hard boundary and deterministic metadata reset.
+            flush_buffer(keep_overlap=False)
+            active_section = block.section
+            active_section_path = block.section_path
             continue
 
         if block.content_type in {"toc", "image_artifact"}:
@@ -402,18 +438,21 @@ def chunk_document_by_section(
         if not block_tokens:
             continue
 
+        block_section = block.section if block.section != "Section 1" else active_section
+        block_section_path = block.section_path if block.section_path else active_section_path
+
         if block.protected and block.content_type != "body_text":
             flush_buffer(keep_overlap=False)
             chunks.append(
                 TextChunk(
                     chunk_id=chunk_id,
-                    section=block.section,
+                    section=block_section,
                     text=block.text,
                     token_count=len(block_tokens),
                     page_start=block.page_start,
                     page_end=block.page_end,
                     content_type=block.content_type,
-                    section_path=block.section_path,
+                    section_path=block_section_path,
                     table_id=block.table_id,
                     figure_id=block.figure_id,
                     figure_ref=block.figure_ref,
@@ -422,11 +461,17 @@ def chunk_document_by_section(
             chunk_id += 1
             continue
 
-        if buffer_tokens and block.section != buffer_tokens[0].section:
+        if buffer_tokens and block_section != buffer_tokens[0].section:
             # Semantic section boundary: do not leak overlap into the new section.
             flush_buffer(keep_overlap=False)
 
-        _append_block_tokens(block)
+        _append_block_tokens(
+            replace(
+                block,
+                section=block_section,
+                section_path=block_section_path,
+            )
+        )
         while len(buffer_tokens) > chunk_size:
             _emit_chunk_from_tokens(buffer_tokens[:chunk_size])
             buffer_tokens = buffer_tokens[chunk_size - overlap :] if overlap else []
