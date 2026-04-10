@@ -49,13 +49,18 @@ def detect_superscript_anchors(tokens: list[LayoutToken], *, body_token_indexes:
             continue
         if not re.fullmatch(r"\d{1,3}", token.text.strip()):
             continue
-        if re.fullmatch(r"\d{4}", prev.text.strip()):
+        prev_clean = prev.text.strip().strip(".,;:()[]")
+        if re.fullmatch(r"\d{4}", prev_clean):
             rejected.append(RejectedAnchor(token_index=idx, reason="year_neighbor"))
             continue
-        if prev.text.lower().startswith(("http://", "https://", "www.")):
+        if prev_clean.lower().startswith(("http://", "https://", "www.")):
             rejected.append(RejectedAnchor(token_index=idx, reason="url_neighbor"))
             continue
-        if re.search(r"[./-]", prev.text):
+        if (
+            re.fullmatch(r"\d+(?:\.\d+)+", prev_clean)
+            or re.fullmatch(r"[A-Z]{1,4}\d+(?:\.\d+)*(?:\(\d+\))?", prev_clean)
+            or re.fullmatch(r"[A-Z]{2,}\d{3,}(?:-\d+)?", prev_clean)
+        ):
             rejected.append(RejectedAnchor(token_index=idx, reason="protected_token_neighbor"))
             continue
         gap = token.x0 - prev.x1
@@ -124,18 +129,32 @@ def analyze_page_layout(tokens: list[LayoutToken], *, page_height: float) -> Pag
     line_map: dict[int, list[tuple[int, LayoutToken]]] = {}
     for idx, tok in enumerate(tokens):
         line_map.setdefault(tok.line_id, []).append((idx, tok))
+    ordered_lines = sorted(
+        ((line_id, sorted(indexed, key=lambda x: x[1].x0)) for line_id, indexed in line_map.items()),
+        key=lambda item: item[1][0][1].top if item[1] else 0.0,
+    )
+    line_top_index = {line_id: pos for pos, (line_id, _) in enumerate(ordered_lines)}
 
     footnote_token_indexes: set[int] = set()
-    for line_id, indexed in line_map.items():
-        line = [tok for _, tok in sorted(indexed, key=lambda x: x[1].x0)]
+    for line_id, indexed in ordered_lines:
+        line = [tok for _, tok in indexed]
         if not line:
             continue
         first = line[0].text.strip().rstrip(").")
+        content = " ".join(tok.text for tok in line[1:]).strip()
         avg_size = sum(tok.size for tok in line) / max(1, len(line))
+        prev_gap = 0.0
+        pos = line_top_index.get(line_id, 0)
+        if pos > 0:
+            prev_line = ordered_lines[pos - 1][1]
+            if prev_line:
+                prev_gap = line[0].top - prev_line[0][1].top
+        is_footer = bool(re.search(r"\bP\s*a\s*g\s*e\b", content, flags=re.IGNORECASE))
         if (
             line[0].top >= page_height * 0.78
             and re.fullmatch(r"\d{1,3}", first)
-            and (median_size == 0 or avg_size <= median_size * 1.05)
+            and not is_footer
+            and (median_size == 0 or avg_size <= median_size * 0.95 or prev_gap >= 12.0)
         ):
             for idx, _ in indexed:
                 footnote_token_indexes.add(idx)

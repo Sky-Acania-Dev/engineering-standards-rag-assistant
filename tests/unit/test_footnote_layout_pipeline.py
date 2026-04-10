@@ -141,6 +141,18 @@ class FootnoteLayoutPipelineTests(unittest.TestCase):
         self.assertIn("10 TAC Chapter 21", joined)
         self.assertIn("102 degrees F", joined)
 
+    def test_footer_page_label_is_not_classified_as_footnote_body(self) -> None:
+        tokens = [
+            LayoutToken(page=1, text="40", x0=10, x1=20, top=731.3, bottom=742.4, size=8, fontname="A", line_id=731, reading_order=0),
+            LayoutToken(page=1, text="|", x0=22, x1=24, top=731.3, bottom=742.4, size=8, fontname="A", line_id=731, reading_order=1),
+            LayoutToken(page=1, text="P", x0=26, x1=28, top=731.3, bottom=742.4, size=8, fontname="A", line_id=731, reading_order=2),
+            LayoutToken(page=1, text="a", x0=30, x1=32, top=731.3, bottom=742.4, size=8, fontname="A", line_id=731, reading_order=3),
+            LayoutToken(page=1, text="g", x0=34, x1=36, top=731.3, bottom=742.4, size=8, fontname="A", line_id=731, reading_order=4),
+            LayoutToken(page=1, text="e", x0=38, x1=40, top=731.3, bottom=742.4, size=8, fontname="A", line_id=731, reading_order=5),
+        ]
+        analysis = analyze_page_layout(tokens, page_height=800)
+        self.assertEqual({}, analysis.footnote_bodies)
+
 
 if __name__ == "__main__":
     unittest.main()
