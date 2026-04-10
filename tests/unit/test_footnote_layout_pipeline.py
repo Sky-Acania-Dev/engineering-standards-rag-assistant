@@ -20,7 +20,7 @@ class FootnoteLayoutPipelineTests(unittest.TestCase):
         links = link_anchors_to_bodies(list(analysis.anchor_candidates), analysis.footnote_bodies)
         lines, metadata = render_page_text_with_footnotes(tokens, links, analysis=analysis)
 
-        self.assertTrue(any("[fn:1]" in line for line in lines))
+        self.assertTrue(any("[footnote: 1]" in line for line in lines))
         self.assertEqual(1, len(metadata))
         self.assertEqual("Requirements", metadata[0]["anchor_text"])
         self.assertEqual("https://example.org/spec", metadata[0]["content"])

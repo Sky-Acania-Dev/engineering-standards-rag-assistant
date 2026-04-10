@@ -15,7 +15,7 @@ Pipeline stages:
 4. **Anchor linking** (`app/ingestion/footnote_linker.py`)
    - Links anchor IDs to same-page footnote body IDs.
 5. **Text normalization** (`app/ingestion/text_normalizer.py`)
-   - Emits inline `[fn:N]` markers and explicit `[FOOTNOTE_DEF]` records with `id|anchor_text|content`.
+   - Emits inline `[footnote: N]` markers and explicit `[FOOTNOTE_DEF]` records with `id|anchor_text|content`.
 6. **Chunk metadata attachment** (`app/ingestion/footnote_resolver.py`, `app/rag/chunking.py`)
    - Consumes explicit footnote definitions and attaches deduplicated structured metadata to chunks.
 

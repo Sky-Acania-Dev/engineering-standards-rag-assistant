@@ -19,7 +19,7 @@ def resolve_footnotes_by_page(document_text: str) -> FootnoteResolvedDocument:
 
     This function intentionally does *not* infer footnote markers from plain digits.
     It only consumes explicit [FOOTNOTE_DEF] lines emitted by the layout-aware PDF
-    pipeline and keeps existing [fn:N] anchors in body text unchanged.
+    pipeline and keeps existing [footnote: N] anchors in body text unchanged.
     """
 
     page_footnotes: dict[int, list[dict[str, Any]]] = {}

@@ -312,7 +312,7 @@ class BuildIndexTests(unittest.TestCase):
                         "## Page 1",
                         "",
                         "1.1 Definitions",
-                        "URL note applies here [fn:1] and code note applies here [fn:2] with explanation here [fn:3].",
+                        "URL note applies here [footnote: 1] and code note applies here [footnote: 2] with explanation here [footnote: 3].",
                         "[FOOTNOTE_DEF] 1|here|https://example.org/spec",
                         "[FOOTNOTE_DEF] 2|here|24 CFR 92.251 and IRC Section R403.1",
                         "[FOOTNOTE_DEF] 3|here|Additional guidance is available from the Texas Historical Commission regarding historic properties and coordination procedures.",
@@ -332,9 +332,9 @@ class BuildIndexTests(unittest.TestCase):
             ]
             body = next(row for row in rows if row["content_type"] == "body_text" and row["section"] == "1.1 Definitions")
 
-            self.assertIn("[fn:1]", body["text"])
-            self.assertIn("[fn:2]", body["text"])
-            self.assertIn("[fn:3]", body["text"])
+            self.assertIn("[footnote: 1]", body["text"])
+            self.assertIn("[footnote: 2]", body["text"])
+            self.assertIn("[footnote: 3]", body["text"])
             self.assertNotIn("1 https://example.org/spec", body["text"])
             self.assertEqual(3, len(body["footnotes"]))
             self.assertTrue(all("anchor_text" in item for item in body["footnotes"]))

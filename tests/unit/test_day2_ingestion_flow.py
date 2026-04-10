@@ -574,14 +574,14 @@ This continuation must stay in section 10.5.
     def test_url_footnote_is_patched_and_dump_removed_with_metadata(self) -> None:
         document = """## Page 1
 1.1 Definitions
-See implementation guidance [fn:1] before proceeding.
+See implementation guidance [footnote: 1] before proceeding.
 [FOOTNOTE_DEF] 1|guidance|https://example.org/guidance
 """
         chunks = chunk_document_by_section(document, chunk_size=120, overlap=20)
         body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
 
         self.assertEqual(1, len(body_chunks))
-        self.assertIn("[fn:1]", body_chunks[0].text)
+        self.assertIn("[footnote: 1]", body_chunks[0].text)
         self.assertNotIn("[FOOTNOTE_DEF]", body_chunks[0].text)
         self.assertIn("https://example.org/guidance", body_chunks[0].footnotes[0]["content"])
         self.assertEqual("https://example.org/guidance", body_chunks[0].footnotes[0]["url"])
@@ -589,25 +589,25 @@ See implementation guidance [fn:1] before proceeding.
     def test_citation_footnote_uses_stable_code_reference_label(self) -> None:
         document = """## Page 1
 1.1 Definitions
-Comply with the cited authority [fn:2] for this section.
+Comply with the cited authority [footnote: 2] for this section.
 [FOOTNOTE_DEF] 2|authority|24 CFR 92.251 and IRC requirements apply.
 """
         chunks = chunk_document_by_section(document, chunk_size=120, overlap=20)
         body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
 
-        self.assertIn("[fn:2]", body_chunks[0].text)
+        self.assertIn("[footnote: 2]", body_chunks[0].text)
         self.assertIn("24 CFR 92.251", body_chunks[0].footnotes[0]["content"])
 
     def test_explanatory_footnote_is_rule_compressed_and_truncated(self) -> None:
         document = """## Page 1
 1.1 Definitions
-Follow this requirement [fn:3] for the project scope.
+Follow this requirement [footnote: 3] for the project scope.
 [FOOTNOTE_DEF] 3|requirement|Additional guidance is available from the Texas Historical Commission regarding historic properties and coordination procedures.
 """
         chunks = chunk_document_by_section(document, chunk_size=120, overlap=20)
         body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
 
-        self.assertIn("[fn:3]", body_chunks[0].text)
+        self.assertIn("[footnote: 3]", body_chunks[0].text)
         self.assertTrue(body_chunks[0].footnotes[0]["content"].startswith("Additional guidance is available"))
 
     def test_ip_like_decimal_strings_are_not_treated_as_headings(self) -> None:
@@ -628,7 +628,7 @@ Continuation remains under Windows.
     def test_cross_page_footnote_resolves_before_chunking(self) -> None:
         document = """## Page 1
 1.1 Definitions
-Requirement text references Rule [fn:3] and remains long enough to split across chunks.
+Requirement text references Rule [footnote: 3] and remains long enough to split across chunks.
 """ + " ".join("contextword" for _ in range(120)) + """
 
 ## Page 2
@@ -637,7 +637,7 @@ Requirement text references Rule [fn:3] and remains long enough to split across 
         chunks = chunk_document_by_section(document, chunk_size=40, overlap=5)
         body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
         joined = " ".join(chunk.text for chunk in body_chunks)
-        self.assertIn("Rule [fn:3]", joined)
+        self.assertIn("Rule [footnote: 3]", joined)
         self.assertNotIn("[FOOTNOTE_DEF]", joined)
         self.assertTrue(any(any(fn["id"] == 3 for fn in chunk.footnotes) for chunk in body_chunks))
 
@@ -657,7 +657,7 @@ https://cyberregs.example/path?id=2306&sec=51
         self.assertIn("UL 2075", text)
         self.assertIn("ASSE 1051-2009", text)
         self.assertIn("https://cyberregs.example/path?id=2306&sec=51", text)
-        self.assertNotIn("[fn:", text)
+        self.assertNotIn("[footnote: ", text)
 
     def test_overlap_preserved_without_cross_section_metadata_leak(self) -> None:
         sec1 = " ".join(f"s1_{i}" for i in range(16))

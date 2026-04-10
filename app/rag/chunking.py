@@ -546,7 +546,7 @@ def chunk_document_by_section(
     page_footnotes = resolved_document.page_footnotes
 
     def _footnotes_for_chunk(text: str, page_start: int | None, page_end: int | None) -> tuple[dict[str, Any], ...]:
-        ids = {int(m.group(1)) for m in re.finditer(r"\[fn:(\d{1,3})\]", text)}
+        ids = {int(m.group(1)) for m in re.finditer(r"\[footnote:\s*(\d{1,3})\]", text)}
         if not ids:
             return ()
         pages: set[int] = set()

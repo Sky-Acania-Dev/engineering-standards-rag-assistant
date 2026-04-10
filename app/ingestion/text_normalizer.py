@@ -36,7 +36,7 @@ def render_page_text_with_footnotes(
             continue
         lines[token.line_id].append(token.text)
         for link in link_by_token.get(idx, []):
-            lines[token.line_id].append(f"[fn:{link.id}]")
+            lines[token.line_id].append(f"[footnote: {link.id}]")
             key = (link.id, link.anchor_text)
             if key not in seen_meta:
                 entry: dict[str, Any] = {
