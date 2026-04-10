@@ -567,6 +567,14 @@ def chunk_document_by_section(
                 if isinstance(entry_id, int) and entry_id in ids and (entry_id, anchor) not in seen:
                     matches.append(entry)
                     seen.add((entry_id, anchor))
+        if not matches:
+            for page in sorted(page_footnotes):
+                for entry in page_footnotes.get(page, ()):
+                    entry_id = entry.get("id")
+                    anchor = str(entry.get("anchor_text", ""))
+                    if isinstance(entry_id, int) and entry_id in ids and (entry_id, anchor) not in seen:
+                        matches.append(entry)
+                        seen.add((entry_id, anchor))
         return tuple(matches)
 
     active_chapter: str | None = None

@@ -3,6 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from app.ingestion.footnote_detector import detect_footnote_bodies, detect_superscript_anchors
+from app.ingestion.footnote_linker import link_anchors_to_bodies
+from app.ingestion.pdf_layout_extractor import tokens_from_pdfplumber_words
+from app.ingestion.text_normalizer import render_page_text_with_footnotes
 
 def _require_pdfplumber() -> Any:
     try:
@@ -77,13 +81,23 @@ def _inject_tables_into_text_lines(page_text_lines: list[str], tables: list[list
 def _extract_structured_page_text_pdfplumber(page: Any, page_number: int) -> str:
     lines = [f"## Page {page_number}"]
 
-    page_text = (page.extract_text() or "").strip()
     page_text_lines: list[str] = []
-    if page_text:
-        for raw_line in page_text.splitlines():
-            line = raw_line.strip()
-            if line:
-                page_text_lines.append(line)
+    layout_tokens = tokens_from_pdfplumber_words(page, page_number)
+    if layout_tokens:
+        anchors = detect_superscript_anchors(layout_tokens)
+        bodies = detect_footnote_bodies(layout_tokens, page_height=float(getattr(page, "height", 0.0) or 0.0))
+        links = link_anchors_to_bodies(anchors, bodies)
+        rendered_lines, footnote_meta = render_page_text_with_footnotes(layout_tokens, links)
+        page_text_lines = [line for line in rendered_lines if line.strip()]
+        for entry in footnote_meta:
+            lines.append(f"[FOOTNOTE_DEF] {entry['id']}|{entry['anchor_text']}|{entry['content']}")
+    else:
+        page_text = (page.extract_text() or "").strip()
+        if page_text:
+            for raw_line in page_text.splitlines():
+                line = raw_line.strip()
+                if line:
+                    page_text_lines.append(line)
 
     table_data = page.extract_tables() or []
     lines.extend(_inject_tables_into_text_lines(page_text_lines, table_data))
