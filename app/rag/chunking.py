@@ -199,6 +199,20 @@ def _is_section_heading(heading: str) -> bool:
     )
 
 
+def _is_standalone_heading_line(line: str) -> bool:
+    compact = " ".join(line.split())
+    if not compact:
+        return False
+    if "http://" in compact.lower() or "https://" in compact.lower():
+        return False
+    token_count = len(compact.split())
+    if token_count > 14:
+        return False
+    if re.search(r"[!?;]", compact):
+        return False
+    return True
+
+
 def _iter_structured_blocks(document_text: str) -> list[_Block]:
     raw_blocks = [b.strip() for b in document_text.split("\n\n") if b.strip()]
     blocks: list[_Block] = []
@@ -305,7 +319,7 @@ def _iter_structured_blocks(document_text: str) -> list[_Block]:
                 break
 
             heading_detected = _detect_structural_heading(current)
-            if heading_detected is not None:
+            if heading_detected is not None and _is_standalone_heading_line(current):
                 _append_content_block(body_buffer)
                 body_buffer = []
                 level, heading_text = heading_detected

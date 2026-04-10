@@ -446,6 +446,18 @@ Foundation requirements begin here.
         self.assertTrue(all("Chapter 3: Foundations" in chunk.section_path for chunk in chapter3_chunks))
         self.assertTrue(all("2.7 Ramps" not in chunk.section_path for chunk in chapter3_chunks))
 
+    def test_long_numeric_lead_line_is_not_treated_as_heading(self) -> None:
+        document = """## Page 1
+2.7 Ramps If installed, ramps shall have a maximum slope of 1 unit vertical to 16 units horizontal.
+Additional body text remains in the same section.
+"""
+        chunks = chunk_document_by_section(document, chunk_size=120, overlap=20)
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+
+        self.assertTrue(body_chunks)
+        self.assertTrue(all(chunk.section == "Section 1" for chunk in body_chunks))
+        self.assertTrue(any("2.7 Ramps If installed" in chunk.text for chunk in body_chunks))
+
     def test_overlap_preserved_without_cross_section_metadata_leak(self) -> None:
         sec1 = " ".join(f"s1_{i}" for i in range(16))
         sec2 = " ".join(f"s2_{i}" for i in range(16))
