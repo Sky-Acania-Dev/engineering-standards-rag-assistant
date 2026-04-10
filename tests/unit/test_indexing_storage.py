@@ -177,6 +177,76 @@ class BuildIndexTests(unittest.TestCase):
             self.assertEqual("table:p7", table_rows[0]["table_id"])
             self.assertIn("| Performance Measure | CZ2 | CZ3 | CZ4 |", table_rows[0]["text"])
 
+    def test_build_index_preserves_windows_and_dwh_tables_in_jsonl(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_dir = Path(temp_dir) / "input"
+            output_dir = Path(temp_dir) / "output"
+            input_dir.mkdir(parents=True)
+            (input_dir / "mixed_tables.txt").write_text(
+                "\n".join(
+                    [
+                        "## Page 12",
+                        "",
+                        "Chapter 10: Windows",
+                        "",
+                        "10.5 Windows",
+                        "Windows in conditioned space must meet minimum performance.",
+                        "Performance Measure  CZ2  CZ3  CZ4",
+                        "U-Factor             0.65 0.50 0.35",
+                        "SHGC                 0.35 0.35 Not Required",
+                        "Impact Resistant Products",
+                        "Performance Measure  CZ2  CZ3  CZ4",
+                        "U-Factor             0.75 0.65 0.35",
+                        "SHGC                 0.40 0.40 Not Required",
+                        "",
+                        "## Page 22",
+                        "",
+                        "Chapter 5: Plumbing",
+                        "",
+                        "5.7 Domestic Water Heaters (DWH)",
+                        "Storage Size in Gallons  Gas DWH EF  Electric DWH EF",
+                        "30                       0.63        0.94",
+                        "40                       0.61        0.93",
+                        "50                       0.59        0.92",
+                        "60                       0.57        0.91",
+                        "70                       0.55        0.90",
+                        "80                       0.53        0.89",
+                        "TMCS.",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            build_index(input_dir=str(input_dir), output_dir=str(output_dir), embedding_dimension=16)
+
+            rows = [
+                json.loads(line)
+                for line in (output_dir / "chunk_store.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+
+            windows_tables = [r for r in rows if r["content_type"] == "table" and r["section"] == "10.5 Windows"]
+            dwh_tables = [r for r in rows if r["content_type"] == "table" and r["section"] == "5.7 Domestic Water Heaters (DWH)"]
+
+            self.assertGreaterEqual(len(windows_tables), 2)
+            self.assertEqual(1, len(dwh_tables))
+            self.assertTrue(all(row["table_id"] for row in windows_tables + dwh_tables))
+
+            windows_text = "\n".join(row["text"] for row in windows_tables)
+            self.assertIn("| Performance Measure | CZ2 | CZ3 | CZ4 |", windows_text)
+            self.assertIn("| U-Factor | 0.65 | 0.50 | 0.35 |", windows_text)
+            self.assertIn("| U-Factor | 0.75 | 0.65 | 0.35 |", windows_text)
+            self.assertNotIn("Performance Measure CZ2 CZ3 CZ4 U-Factor 0.65 0.50 0.35", windows_text)
+
+            dwh_text = dwh_tables[0]["text"]
+            self.assertIn("| Storage Size in Gallons | Gas DWH EF | Electric DWH EF |", dwh_text)
+            self.assertIn("| 30 | 0.63 | 0.94 |", dwh_text)
+            self.assertIn("| 80 | 0.53 | 0.89 |", dwh_text)
+
+            # No fake sections should reappear.
+            sections = {row["section"] for row in rows}
+            self.assertNotIn("TMCS.", sections)
+
 
 if __name__ == "__main__":
     unittest.main()

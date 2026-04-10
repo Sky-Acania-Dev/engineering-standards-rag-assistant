@@ -277,6 +277,32 @@ Storage Size in Gallons  Gas DWH EF  Electric DWH EF
         self.assertIn("| 40 | 0.62 | 0.95 |", table_chunks[0].text)
         self.assertEqual("5.7 Domestic Water Heaters (DWH)", table_chunks[0].section)
 
+    def test_chunking_splits_prose_plus_inline_unmarked_table_into_table_chunk(self) -> None:
+        document = """## Page 40
+
+Chapter 10: Windows
+
+10.5 Windows
+Windows in conditioned space must meet minimum performance.
+Performance Measure  CZ2  CZ3  CZ4
+U-Factor             0.65 0.50 0.35
+SHGC                 0.35 0.35 Not Required
+Impact Resistant Products
+Performance Measure  CZ2  CZ3  CZ4
+U-Factor             0.75 0.65 0.35
+SHGC                 0.40 0.40 Not Required
+"""
+        chunks = chunk_document_by_section(document, chunk_size=160, overlap=20)
+
+        table_chunks = [c for c in chunks if c.content_type == "table" and c.section == "10.5 Windows"]
+        self.assertGreaterEqual(len(table_chunks), 2)
+        self.assertTrue(any("| U-Factor | 0.65 | 0.50 | 0.35 |" in c.text for c in table_chunks))
+        self.assertTrue(any("| U-Factor | 0.75 | 0.65 | 0.35 |" in c.text for c in table_chunks))
+        self.assertTrue(all(c.table_id is not None for c in table_chunks))
+
+        body_chunks = [c for c in chunks if c.content_type == "body_text" and c.section == "10.5 Windows"]
+        self.assertTrue(any("Windows in conditioned space must meet minimum performance." in c.text for c in body_chunks))
+
     def test_multi_page_toc_is_preserved_and_not_mixed_with_body(self) -> None:
         document = """## Page 2
 

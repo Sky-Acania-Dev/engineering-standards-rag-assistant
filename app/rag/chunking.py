@@ -263,8 +263,11 @@ def _serialize_unmarked_table(lines: list[str], *, page: int | None) -> tuple[st
         # Common PDF artifact: first column is separated by wide spaces, while
         # trailing numeric columns collapse to single spaces.
         if len(cells) < column_count and cells:
-            expanded_tail = cells[-1].split()
-            if len(cells[:-1]) + len(expanded_tail) == column_count:
+            prefix = cells[:-1]
+            needed_tail_columns = column_count - len(prefix)
+            expanded_tail = cells[-1].split(maxsplit=max(0, needed_tail_columns - 1))
+            if len(prefix) + len(expanded_tail) == column_count:
+                # Preserve multi-word values in the last column (e.g. "Not Required").
                 cells = cells[:-1] + expanded_tail
         rows.append(cells)
 
@@ -277,6 +280,45 @@ def _serialize_unmarked_table(lines: list[str], *, page: int | None) -> tuple[st
     rendered = ["| " + " | ".join(header) + " |", separator]
     rendered.extend("| " + " | ".join(row) + " |" for row in rows[1:])
     return "\n".join(rendered), f"table:p{page}" if page is not None else "table:unknown"
+
+
+def _segment_inline_table_runs(lines: list[str], *, page: int | None) -> list[tuple[str, list[str]]] | None:
+    if len(lines) < 4:
+        return None
+
+    segments: list[tuple[str, list[str]]] = []
+    idx = 0
+    while idx < len(lines):
+        if _table_row_cells(lines[idx]) is None:
+            start = idx
+            while idx < len(lines) and _table_row_cells(lines[idx]) is None:
+                idx += 1
+            segments.append(("body", lines[start:idx]))
+            continue
+
+        start = idx
+        while idx < len(lines) and _table_row_cells(lines[idx]) is not None:
+            idx += 1
+        run = lines[start:idx]
+        if len(run) >= 3 and _serialize_unmarked_table(run, page=page) is not None:
+            segments.append(("table", run))
+        else:
+            segments.append(("body", run))
+
+    merged: list[tuple[str, list[str]]] = []
+    for kind, segment_lines in segments:
+        if not segment_lines:
+            continue
+        if merged and merged[-1][0] == kind:
+            merged[-1][1].extend(segment_lines)
+        else:
+            merged.append((kind, list(segment_lines)))
+
+    if not any(kind == "table" for kind, _ in merged):
+        return None
+    if all(kind == "table" for kind, _ in merged):
+        return None
+    return merged
 
 
 def _iter_structured_blocks(document_text: str) -> list[_Block]:
@@ -292,6 +334,16 @@ def _iter_structured_blocks(document_text: str) -> list[_Block]:
         nonlocal pending_image_ref
         if not lines:
             return
+        if (
+            force_content_type is None
+            and not lines[0].startswith("[TABLE]")
+            and not all(line.startswith("|") for line in lines)
+        ):
+            segmented = _segment_inline_table_runs(lines, page=page)
+            if segmented is not None:
+                for _, segment_lines in segmented:
+                    _append_content_block(segment_lines)
+                return
 
         full_block = "\n".join(lines)
         content_type = force_content_type or "body_text"
