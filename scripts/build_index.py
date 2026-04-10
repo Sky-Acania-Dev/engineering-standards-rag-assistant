@@ -69,8 +69,9 @@ def build_index(
         for chunk in result.chunks:
             metadata = metadata_by_chunk_id[chunk.chunk_id]
             chunk_uid = _stable_chunk_uid(result.doc_id, chunk.chunk_id)
-            chunk_ids.append(chunk_uid)
-            chunk_texts.append(chunk.text)
+            if chunk.content_type != "image_artifact":
+                chunk_ids.append(chunk_uid)
+                chunk_texts.append(chunk.text)
             stored_chunks.append(
                 StoredChunk(
                     chunk_uid=chunk_uid,
@@ -79,7 +80,8 @@ def build_index(
                     title=metadata.title,
                     section=metadata.section,
                     chunk_id=metadata.chunk_id,
-                    page=metadata.page,
+                    page_start=metadata.page_start,
+                    page_end=metadata.page_end,
                     content_type=metadata.content_type,
                     section_path=metadata.section_path,
                     table_id=metadata.table_id,
@@ -112,7 +114,8 @@ def build_index(
 
     stats: dict[str, int | str | None] = {
         "documents": len(ingestion_results),
-        "chunks": len(chunk_ids),
+        "chunks": len(stored_chunks),
+        "embedded_chunks": len(chunk_ids),
         "embedding_dimension": vector_dimension,
         "embedder_provider": resolved_embedder.spec.provider,
         "embedding_model": resolved_embedder.spec.model_name,

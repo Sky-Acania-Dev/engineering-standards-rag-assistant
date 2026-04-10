@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import re
+from difflib import SequenceMatcher
 from typing import Iterable
 
 
@@ -11,7 +12,8 @@ class TextChunk:
     section: str
     text: str
     token_count: int
-    page: int | None = None
+    page_start: int | None = None
+    page_end: int | None = None
     content_type: str = "body_text"
     section_path: tuple[str, ...] = ()
     table_id: str | None = None
@@ -25,12 +27,14 @@ class TextChunk:
 class _Block:
     text: str
     content_type: str
-    page: int | None
+    page_start: int | None
+    page_end: int | None
     section: str
     section_path: tuple[str, ...]
     table_id: str | None = None
     figure_id: str | None = None
     figure_ref: str | None = None
+    heading_level: int | None = None
     protected: bool = False
 
 
@@ -112,12 +116,96 @@ def _serialize_table_block(block: str) -> tuple[str, str | None]:
     return "\n".join(rendered), caption
 
 
+def _update_heading_stack(
+    heading_stack: list[tuple[int, str]],
+    *,
+    level: int,
+    heading_text: str,
+) -> tuple[str, tuple[str, ...]]:
+    while heading_stack and heading_stack[-1][0] >= level:
+        heading_stack.pop()
+    heading_stack.append((level, heading_text))
+    return heading_text, tuple(title for _, title in heading_stack)
+
+
+def _normalize_heading_text(text: str) -> str:
+    cleaned = " ".join(text.split())
+    cleaned = cleaned.replace("###", " ")
+    cleaned = re.sub(r"\bIC-\s+P-", "IC-P-", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    # OCR/extraction artifacts often append page digits directly to the heading.
+    cleaned = re.sub(r"(?<=[A-Za-z])\d{1,4}$", "", cleaned).strip()
+    cleaned = re.sub(r"\b(Section\s+[A-Za-z]\d{3,})\d{1,2}$", r"\1", cleaned, flags=re.IGNORECASE)
+    return cleaned
+
+
+def _detect_structural_heading(line: str) -> tuple[int, str] | None:
+    markdown_heading = re.match(r"^(#{1,6})\s+(.+)$", line)
+    if markdown_heading:
+        return len(markdown_heading.group(1)), _normalize_heading_text(markdown_heading.group(2))
+
+    chapter_heading = re.match(
+        r"^(chapter)\s+(\d+[A-Za-z]?)\s*[:.\-–]?\s*(.+)?$",
+        line,
+        flags=re.IGNORECASE,
+    )
+    if chapter_heading:
+        chapter_label = chapter_heading.group(1).capitalize()
+        chapter_number = chapter_heading.group(2)
+        chapter_title = (chapter_heading.group(3) or "").strip()
+        heading = f"{chapter_label} {chapter_number}"
+        if chapter_title:
+            heading = f"{heading}: {chapter_title}"
+        return 2, _normalize_heading_text(heading)
+
+    section_heading = re.match(r"^(section)\s+([\w.\-]+)\s*[:.\-–]?\s*(.+)?$", line, flags=re.IGNORECASE)
+    if section_heading:
+        section_label = section_heading.group(1).capitalize()
+        section_number = section_heading.group(2)
+        section_title = (section_heading.group(3) or "").strip()
+        heading = f"{section_label} {section_number}"
+        if section_title:
+            heading = f"{heading}: {section_title}"
+        return 2, _normalize_heading_text(heading)
+
+    decimal_heading = re.match(r"^(\d+(?:\.\d+){1,3})\s+(.+)$", line)
+    if decimal_heading:
+        depth = decimal_heading.group(1).count(".") + 3
+        heading = f"{decimal_heading.group(1)} {decimal_heading.group(2)}"
+        return min(depth, 6), _normalize_heading_text(heading)
+
+    return None
+
+
+def _is_image_artifact_block(text: str) -> bool:
+    compact = " ".join(text.split())
+    marker = r"\[IMAGES?\]\s+\d+\s+embedded\s+image\(s\)"
+    if not re.search(marker, compact, flags=re.IGNORECASE):
+        return False
+    # Cover/image placeholder artifacts are usually very short title + marker text.
+    # Avoid classifying regular running text that merely mentions an image marker.
+    return len(compact.split()) <= 24 and bool(
+        re.fullmatch(rf"(?:.+\s+)?{marker}", compact, flags=re.IGNORECASE)
+    )
+
+
+def _is_chapter_heading(heading: str) -> bool:
+    return bool(re.match(r"^Chapter\s+\d+[A-Za-z]?(?:\s*:.*)?$", heading, flags=re.IGNORECASE))
+
+
+def _is_section_heading(heading: str) -> bool:
+    return bool(re.match(r"^\d+(?:\.\d+){1,3}\s+.+$", heading)) or bool(
+        re.match(r"^Section\s+[\w.\-]+(?:\s*:.*)?$", heading, flags=re.IGNORECASE)
+    )
+
+
 def _iter_structured_blocks(document_text: str) -> list[_Block]:
     raw_blocks = [b.strip() for b in document_text.split("\n\n") if b.strip()]
     blocks: list[_Block] = []
     page: int | None = None
     heading_stack: list[tuple[int, str]] = []
     section = "Section 1"
+    section_path: tuple[str, ...] = ()
     pending_image_ref: str | None = None
 
     for raw_block in raw_blocks:
@@ -134,40 +222,34 @@ def _iter_structured_blocks(document_text: str) -> list[_Block]:
                 page = int(page_match.group(1))
                 cursor += 1
                 continue
+            if _looks_like_toc_line(current):
+                break
 
-            heading_match = re.match(r"^(#{1,6})\s+(.+)$", current)
-            chapter_match = re.match(r"^(Chapter\s+\d+.*|Section\s+[\w.\-]+.*)$", current, flags=re.IGNORECASE)
-            if heading_match or chapter_match:
-                if heading_match:
-                    level = len(heading_match.group(1))
-                    heading_text = heading_match.group(2).strip()
-                else:
-                    level = 2
-                    heading_text = current.strip()
-                while heading_stack and heading_stack[-1][0] >= level:
-                    heading_stack.pop()
-                heading_stack.append((level, heading_text))
-                section = heading_text
-                blocks.append(
-                    _Block(
-                        text=heading_text,
-                        content_type="section_header",
-                        page=page,
-                        section=section,
-                        section_path=tuple(title for _, title in heading_stack),
-                        protected=True,
-                    )
+            heading_detected = _detect_structural_heading(current)
+            if heading_detected is None:
+                break
+
+            level, heading_text = heading_detected
+            section, section_path = _update_heading_stack(heading_stack, level=level, heading_text=heading_text)
+            blocks.append(
+                _Block(
+                    text=heading_text,
+                    content_type="section_header",
+                    page_start=page,
+                    page_end=page,
+                    section=section,
+                    section_path=section_path,
+                    heading_level=level,
+                    protected=True,
                 )
-                cursor += 1
-                continue
-            break
+            )
+            cursor += 1
 
         lines = lines[cursor:]
         if not lines:
             continue
 
         full_block = "\n".join(lines)
-        section_path = tuple(title for _, title in heading_stack)
         content_type = "body_text"
         protected = False
         table_id: str | None = None
@@ -183,7 +265,8 @@ def _iter_structured_blocks(document_text: str) -> list[_Block]:
                 _Block(
                     text=full_block,
                     content_type="header_footer_noise",
-                    page=page,
+                    page_start=page,
+                    page_end=page,
                     section=section,
                     section_path=section_path,
                     figure_ref=pending_image_ref,
@@ -213,12 +296,16 @@ def _iter_structured_blocks(document_text: str) -> list[_Block]:
         elif _is_list_block(lines):
             content_type = "list"
             protected = True
+        elif _is_image_artifact_block(full_block):
+            content_type = "image_artifact"
+            protected = True
 
         blocks.append(
             _Block(
                 text=full_block,
                 content_type=content_type,
-                page=page,
+                page_start=page,
+                page_end=page,
                 section=section,
                 section_path=section_path,
                 table_id=table_id,
@@ -231,58 +318,222 @@ def _iter_structured_blocks(document_text: str) -> list[_Block]:
     return blocks
 
 
+def _normalized_chunk_text(text: str) -> str:
+    collapsed = " ".join(text.lower().split())
+    collapsed = re.sub(r"\bpage\s+\d+\b", "", collapsed, flags=re.IGNORECASE)
+    return collapsed.strip()
+
+
+def _is_near_duplicate(left: str, right: str) -> bool:
+    if left == right:
+        return True
+    if not left or not right:
+        return False
+    return SequenceMatcher(None, left, right).ratio() >= 0.96
+
+
+def _deduplicate_chunks(chunks: list[TextChunk]) -> list[TextChunk]:
+    kept: list[TextChunk] = []
+    normalized_seen: list[str] = []
+
+    for chunk in chunks:
+        normalized = _normalized_chunk_text(chunk.text)
+        should_skip = any(_is_near_duplicate(normalized, seen) for seen in normalized_seen)
+        if should_skip and chunk.content_type in {"body_text", "image_artifact", "toc"}:
+            continue
+        kept.append(chunk)
+        normalized_seen.append(normalized)
+
+    reindexed: list[TextChunk] = []
+    for new_id, chunk in enumerate(kept):
+        reindexed.append(replace(chunk, chunk_id=new_id))
+
+    linked: list[TextChunk] = []
+    for idx, chunk in enumerate(reindexed):
+        prev_chunk_id = reindexed[idx - 1].chunk_id if idx > 0 else None
+        next_chunk_id = reindexed[idx + 1].chunk_id if idx + 1 < len(reindexed) else None
+        linked.append(replace(chunk, prev_chunk_id=prev_chunk_id, next_chunk_id=next_chunk_id))
+
+    return linked
+
+
 def chunk_document_by_section(
     document_text: str,
     *,
     chunk_size: int = 800,
     overlap: int = 150,
+    soft_split_ratio: float = 0.7,
+    hard_split_ratio: float = 1.25,
 ) -> list[TextChunk]:
     if chunk_size <= overlap:
         raise ValueError("chunk_size must be greater than overlap")
+    if not 0 < soft_split_ratio <= 1:
+        raise ValueError("soft_split_ratio must be in (0, 1]")
+    if hard_split_ratio < 1:
+        raise ValueError("hard_split_ratio must be >= 1")
 
     blocks = _iter_structured_blocks(document_text)
     chunks: list[TextChunk] = []
     chunk_id = 0
-    buffer_tokens: list[str] = []
-    buffer_page: int | None = None
-    buffer_section = "Section 1"
-    buffer_section_path: tuple[str, ...] = ()
 
-    def flush_buffer() -> None:
-        nonlocal chunk_id, buffer_tokens
-        if not buffer_tokens:
+    active_chapter: str | None = None
+    active_section_heading: str | None = None
+    body_units: list[list[tuple[str, int | None]]] = []
+    body_section = "Section 1"
+    body_section_path: tuple[str, ...] = ()
+    toc_buffer: list[_Block] = []
+
+    def _current_section_metadata() -> tuple[str, tuple[str, ...]]:
+        if active_section_heading is not None:
+            if active_chapter and active_section_heading != active_chapter:
+                return active_section_heading, (active_chapter, active_section_heading)
+            return active_section_heading, (active_section_heading,)
+        if active_chapter is not None:
+            return active_chapter, (active_chapter,)
+        return "Section 1", ()
+
+    def _body_heading_prefix(page: int | None) -> list[tuple[str, int | None]]:
+        section, path = _current_section_metadata()
+        lines: list[str] = []
+        if path:
+            lines.extend(path)
+        elif section:
+            lines.append(section)
+        return [(line, page) for line in lines if line]
+
+    def _emit_toc_buffer() -> None:
+        nonlocal chunk_id, toc_buffer
+        if not toc_buffer:
             return
+        # Intentionally emit a single contiguous TOC chunk even if it exceeds
+        # body chunk_size, so TOC ordering stays complete and reviewable.
+        text = "\n".join(block.text for block in toc_buffer if block.text.strip())
+        page_start = next((block.page_start for block in toc_buffer if block.page_start is not None), None)
+        page_end = next((block.page_end for block in reversed(toc_buffer) if block.page_end is not None), None)
+        toc_section = active_section_heading or active_chapter or "Table of Contents"
+        toc_path = tuple(p for p in (active_chapter, active_section_heading) if p) or ("Table of Contents",)
         chunks.append(
             TextChunk(
                 chunk_id=chunk_id,
-                section=buffer_section,
-                text=" ".join(buffer_tokens),
-                token_count=len(buffer_tokens),
-                page=buffer_page,
-                content_type="body_text",
-                section_path=buffer_section_path,
+                section=toc_section,
+                text=text,
+                token_count=len(_tokenize(text)),
+                page_start=page_start,
+                page_end=page_end,
+                content_type="toc",
+                section_path=toc_path,
             )
         )
         chunk_id += 1
-        buffer_tokens = buffer_tokens[-overlap:] if overlap else []
+        toc_buffer = []
 
-    for block in blocks:
-        if block.content_type in {"section_header", "header_footer_noise"}:
-            continue
+    def _flush_body_chunks() -> None:
+        nonlocal body_units, chunk_id
+        if not body_units:
+            return
+        soft_limit = max(1, int(chunk_size * soft_split_ratio))
+        hard_limit = max(chunk_size + 1, int(chunk_size * hard_split_ratio))
 
-        if block.content_type == "toc":
-            # Keep TOC isolated from body-text chunks.
-            flush_buffer()
-            block_tokens = _tokenize(block.text)
+        def emit_tokens(tokens: list[tuple[str, int | None]]) -> None:
+            nonlocal chunk_id
+            chunk_pages = [page for _, page in tokens if page is not None]
             chunks.append(
                 TextChunk(
                     chunk_id=chunk_id,
-                    section=block.section,
+                    section=body_section,
+                    text=" ".join(token for token, _ in tokens),
+                    token_count=len(tokens),
+                    page_start=chunk_pages[0] if chunk_pages else None,
+                    page_end=chunk_pages[-1] if chunk_pages else None,
+                    content_type="body_text",
+                    section_path=body_section_path,
+                )
+            )
+            chunk_id += 1
+
+        current: list[tuple[str, int | None]] = []
+        for unit in body_units:
+            unit_tokens = unit
+            if len(unit_tokens) > chunk_size:
+                if current:
+                    # Avoid emitting tiny heading-only chunks; attach heading prefix
+                    # to the first large paragraph and then split.
+                    if len(current) <= max(8, overlap // 2):
+                        unit_tokens = current + unit_tokens
+                        current = []
+                    else:
+                        emit_tokens(current)
+                        current = current[-overlap:] if overlap else []
+                while len(unit_tokens) > chunk_size:
+                    emit_tokens(unit_tokens[:chunk_size])
+                    unit_tokens = unit_tokens[chunk_size - overlap :] if overlap else unit_tokens[chunk_size:]
+                if unit_tokens:
+                    current = unit_tokens
+                continue
+
+            projected = len(current) + len(unit_tokens)
+            if current and projected > chunk_size and len(current) >= soft_limit:
+                # Soft policy: prefer splitting at this paragraph boundary.
+                emit_tokens(current)
+                current = current[-overlap:] if overlap else []
+            elif current and projected > hard_limit:
+                # No section boundary was found by hard limit; fall back to
+                # normal target-sized split with overlap behavior.
+                merged = current + unit_tokens
+                emit_tokens(merged[:chunk_size])
+                current = merged[chunk_size - overlap :] if overlap else merged[chunk_size:]
+                continue
+            current.extend(unit_tokens)
+
+        if current:
+            emit_tokens(current)
+
+        body_units = []
+
+    def _start_new_section(page: int | None) -> None:
+        nonlocal body_section, body_section_path, body_units
+        body_section, body_section_path = _current_section_metadata()
+        prefix = _body_heading_prefix(page)
+        body_units = [prefix] if prefix else []
+
+    for block in blocks:
+        if block.content_type == "toc":
+            if body_units:
+                _flush_body_chunks()
+            toc_buffer.append(block)
+            continue
+        _emit_toc_buffer()
+
+        if block.content_type == "section_header":
+            _flush_body_chunks()
+            if _is_chapter_heading(block.text):
+                active_chapter = block.text
+                active_section_heading = None
+            elif _is_section_heading(block.text):
+                active_section_heading = block.text
+                if active_chapter is None:
+                    active_chapter = block.text if block.text.lower().startswith("chapter ") else None
+            else:
+                active_section_heading = block.text
+            continue
+
+        if block.content_type == "header_footer_noise":
+            continue
+
+        if block.content_type == "image_artifact":
+            _flush_body_chunks()
+            artifact_tokens = _tokenize(block.text)
+            section_name, section_path = _current_section_metadata()
+            chunks.append(
+                TextChunk(
+                    chunk_id=chunk_id,
+                    section=section_name,
                     text=block.text,
-                    token_count=len(block_tokens),
-                    page=block.page,
-                    content_type="toc",
-                    section_path=block.section_path,
+                    token_count=len(artifact_tokens),
+                    page_start=block.page_start,
+                    page_end=block.page_end,
+                    content_type="image_artifact",
+                    section_path=section_path,
                 )
             )
             chunk_id += 1
@@ -293,16 +544,18 @@ def chunk_document_by_section(
             continue
 
         if block.protected and block.content_type != "body_text":
-            flush_buffer()
+            _flush_body_chunks()
+            section_name, section_path = _current_section_metadata()
             chunks.append(
                 TextChunk(
                     chunk_id=chunk_id,
-                    section=block.section,
+                    section=section_name,
                     text=block.text,
                     token_count=len(block_tokens),
-                    page=block.page,
+                    page_start=block.page_start,
+                    page_end=block.page_end,
                     content_type=block.content_type,
-                    section_path=block.section_path,
+                    section_path=section_path,
                     table_id=block.table_id,
                     figure_id=block.figure_id,
                     figure_ref=block.figure_ref,
@@ -311,67 +564,14 @@ def chunk_document_by_section(
             chunk_id += 1
             continue
 
-        if buffer_tokens and block.section != buffer_section:
-            flush_buffer()
+        if not body_units:
+            _start_new_section(block.page_start)
+        body_units.append([(token, block.page_end) for token in block_tokens])
 
-        if not buffer_tokens:
-            buffer_page = block.page
-            buffer_section = block.section
-            buffer_section_path = block.section_path
+    _emit_toc_buffer()
+    _flush_body_chunks()
 
-        combined = buffer_tokens + block_tokens
-        while len(combined) > chunk_size:
-            current = combined[:chunk_size]
-            chunks.append(
-                TextChunk(
-                    chunk_id=chunk_id,
-                    section=buffer_section,
-                    text=" ".join(current),
-                    token_count=len(current),
-                    page=buffer_page,
-                    content_type="body_text",
-                    section_path=buffer_section_path,
-                )
-            )
-            chunk_id += 1
-            combined = combined[chunk_size - overlap :]
-        buffer_tokens = combined
-
-    if buffer_tokens:
-        chunks.append(
-            TextChunk(
-                chunk_id=chunk_id,
-                section=buffer_section,
-                text=" ".join(buffer_tokens),
-                token_count=len(buffer_tokens),
-                page=buffer_page,
-                content_type="body_text",
-                section_path=buffer_section_path,
-            )
-        )
-
-    linked: list[TextChunk] = []
-    for idx, chunk in enumerate(chunks):
-        prev_chunk_id = chunks[idx - 1].chunk_id if idx > 0 else None
-        next_chunk_id = chunks[idx + 1].chunk_id if idx + 1 < len(chunks) else None
-        linked.append(
-            TextChunk(
-                chunk_id=chunk.chunk_id,
-                section=chunk.section,
-                text=chunk.text,
-                token_count=chunk.token_count,
-                page=chunk.page,
-                content_type=chunk.content_type,
-                section_path=chunk.section_path,
-                table_id=chunk.table_id,
-                figure_id=chunk.figure_id,
-                figure_ref=chunk.figure_ref,
-                prev_chunk_id=prev_chunk_id,
-                next_chunk_id=next_chunk_id,
-            )
-        )
-
-    return linked
+    return _deduplicate_chunks(chunks)
 
 
 def chunks_to_text(chunks: Iterable[TextChunk]) -> list[str]:

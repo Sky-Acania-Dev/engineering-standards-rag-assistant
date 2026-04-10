@@ -10,7 +10,8 @@ from app.rag.chunking import TextChunk
 class ChunkMetadata:
     doc_id: str
     title: str
-    page: int | None
+    page_start: int | None
+    page_end: int | None
     section: str
     chunk_id: int
     content_type: str = "body_text"
@@ -27,13 +28,15 @@ def build_chunk_metadata(
     doc_id: str,
     title: str,
     chunks: Iterable[TextChunk],
-    page: int | None = None,
+    page_start: int | None = None,
+    page_end: int | None = None,
 ) -> list[ChunkMetadata]:
     return [
         ChunkMetadata(
             doc_id=doc_id,
             title=title,
-            page=chunk.page if chunk.page is not None else page,
+            page_start=chunk.page_start if chunk.page_start is not None else page_start,
+            page_end=chunk.page_end if chunk.page_end is not None else page_end,
             section=chunk.section,
             chunk_id=chunk.chunk_id,
             content_type=chunk.content_type,
