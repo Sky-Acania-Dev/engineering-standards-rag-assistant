@@ -43,9 +43,9 @@ def _tokenize(text: str) -> list[str]:
 
 
 def _normalize_line_noise(line: str) -> str:
-    cleaned = " ".join(line.split())
+    cleaned = line.strip()
     cleaned = re.sub(r"\b(\d+)\s*\|\s*P\s*a\s*g\s*e\b", r"Page \1", cleaned, flags=re.IGNORECASE)
-    return cleaned.strip()
+    return cleaned
 
 
 def _looks_like_toc_line(line: str) -> bool:
@@ -100,19 +100,19 @@ def _serialize_table_block(block: str) -> tuple[str, str | None]:
     if not rows:
         return block, caption
 
-    header = rows[0]
-    data_rows = rows[1:]
+    normalized: list[list[str]] = []
+    width = max(len(row) for row in rows)
+    for row in rows:
+        if set(row) <= {"---", "--", "-"}:
+            continue
+        normalized.append(row + [""] * (width - len(row)))
+    if not normalized:
+        return block, caption
+
     rendered: list[str] = []
     if caption:
         rendered.append(f"Table caption: {caption}")
-    rendered.append("Table columns: " + "; ".join(header))
-
-    for idx, row in enumerate(data_rows, start=1):
-        if set(row) <= {"---", "--", "-"}:
-            continue
-        pairs = [f"{header[col_idx] if col_idx < len(header) else f'col_{col_idx + 1}'}={value}" for col_idx, value in enumerate(row)]
-        rendered.append(f"Row {idx}: " + "; ".join(pairs))
-
+    rendered.extend(f"| {' | '.join(row)} |" for row in normalized)
     return "\n".join(rendered), caption
 
 
@@ -142,7 +142,21 @@ def _normalize_heading_text(text: str) -> str:
 def _detect_structural_heading(line: str) -> tuple[int, str] | None:
     markdown_heading = re.match(r"^(#{1,6})\s+(.+)$", line)
     if markdown_heading:
-        return len(markdown_heading.group(1)), _normalize_heading_text(markdown_heading.group(2))
+        # Markdown markers are parser hints. Only treat them as structural
+        # sections if the embedded text matches known heading patterns.
+        inner = markdown_heading.group(2).strip()
+        detected = _detect_structural_heading(inner)
+        if detected is not None:
+            return detected
+        normalized = _normalize_heading_text(inner)
+        if (
+            len(normalized.split()) >= 2
+            and not re.fullmatch(r"[A-Z]{2,}\.?", normalized)
+            and "http://" not in normalized.lower()
+            and "https://" not in normalized.lower()
+        ):
+            return len(markdown_heading.group(1)), normalized
+        return None
 
     chapter_heading = re.match(
         r"^(chapter)\s+(\d+[A-Za-z]?)\s*[:.\-–]?\s*(.+)?$",
@@ -168,7 +182,7 @@ def _detect_structural_heading(line: str) -> tuple[int, str] | None:
             heading = f"{heading}: {section_title}"
         return 2, _normalize_heading_text(heading)
 
-    decimal_heading = re.match(r"^(\d+(?:\.\d+){1,3})\s+(.+)$", line)
+    decimal_heading = re.match(r"^(\d{1,2}(?:\.\d+){1,3})\s+(.+)$", line)
     if decimal_heading:
         depth = decimal_heading.group(1).count(".") + 3
         heading = f"{decimal_heading.group(1)} {decimal_heading.group(2)}"
@@ -205,12 +219,106 @@ def _is_standalone_heading_line(line: str) -> bool:
         return False
     if "http://" in compact.lower() or "https://" in compact.lower():
         return False
+    if re.search(r"\bwww\.", compact, flags=re.IGNORECASE):
+        return False
+    if re.fullmatch(r"[A-Z]{2,}\.?", compact):
+        return False
+    if re.fullmatch(r"[A-Z]-\d{4}-\d{3,}", compact):
+        return False
     token_count = len(compact.split())
     if token_count > 14:
+        return False
+    if token_count <= 2 and compact.endswith("."):
+        return False
+    if token_count > 7 and re.search(r"\b(shall|must|comply|provided|required)\b", compact, flags=re.IGNORECASE):
         return False
     if re.search(r"[!?;]", compact):
         return False
     return True
+
+
+def _table_row_cells(line: str) -> list[str] | None:
+    if "|" in line:
+        cells = [cell.strip() for cell in line.split("|") if cell.strip()]
+        return cells or None
+    cells = [cell.strip() for cell in re.split(r"\s{2,}", line) if cell.strip()]
+    if len(cells) >= 2:
+        return cells
+    return None
+
+
+def _serialize_unmarked_table(lines: list[str]) -> str | None:
+    header = _table_row_cells(lines[0]) if lines else None
+    if header is None:
+        return None
+    column_count = len(header)
+    if column_count < 2:
+        return None
+    rows: list[list[str]] = [header]
+
+    for line in lines[1:]:
+        cells = _table_row_cells(line)
+        if cells is None:
+            return None
+        # Common PDF artifact: first column is separated by wide spaces, while
+        # trailing numeric columns collapse to single spaces.
+        if len(cells) < column_count and cells:
+            prefix = cells[:-1]
+            needed_tail_columns = column_count - len(prefix)
+            expanded_tail = cells[-1].split(maxsplit=max(0, needed_tail_columns - 1))
+            if len(prefix) + len(expanded_tail) == column_count:
+                # Preserve multi-word values in the last column (e.g. "Not Required").
+                cells = cells[:-1] + expanded_tail
+        rows.append(cells)
+
+    if len(rows) < 3:
+        return None
+    if any(len(row) != column_count for row in rows):
+        return None
+
+    separator = "| " + " | ".join("---" for _ in header) + " |"
+    rendered = ["| " + " | ".join(header) + " |", separator]
+    rendered.extend("| " + " | ".join(row) + " |" for row in rows[1:])
+    return "\n".join(rendered)
+
+
+def _segment_inline_table_runs(lines: list[str], *, page: int | None) -> list[tuple[str, list[str]]] | None:
+    if len(lines) < 4:
+        return None
+
+    segments: list[tuple[str, list[str]]] = []
+    idx = 0
+    while idx < len(lines):
+        if _table_row_cells(lines[idx]) is None:
+            start = idx
+            while idx < len(lines) and _table_row_cells(lines[idx]) is None:
+                idx += 1
+            segments.append(("body", lines[start:idx]))
+            continue
+
+        start = idx
+        while idx < len(lines) and _table_row_cells(lines[idx]) is not None:
+            idx += 1
+        run = lines[start:idx]
+        if len(run) >= 3 and _serialize_unmarked_table(run) is not None:
+            segments.append(("table", run))
+        else:
+            segments.append(("body", run))
+
+    merged: list[tuple[str, list[str]]] = []
+    for kind, segment_lines in segments:
+        if not segment_lines:
+            continue
+        if merged and merged[-1][0] == kind:
+            merged[-1][1].extend(segment_lines)
+        else:
+            merged.append((kind, list(segment_lines)))
+
+    if not any(kind == "table" for kind, _ in merged):
+        return None
+    if all(kind == "table" for kind, _ in merged):
+        return None
+    return merged
 
 
 def _iter_structured_blocks(document_text: str) -> list[_Block]:
@@ -221,11 +329,29 @@ def _iter_structured_blocks(document_text: str) -> list[_Block]:
     section = "Section 1"
     section_path: tuple[str, ...] = ()
     pending_image_ref: str | None = None
+    table_seq_by_page: dict[int | None, int] = {}
+
+    def _next_table_id() -> str:
+        current = table_seq_by_page.get(page, 0) + 1
+        table_seq_by_page[page] = current
+        if page is not None:
+            return f"table:p{page}:{current}"
+        return f"table:unknown:{current}"
 
     def _append_content_block(lines: list[str], *, force_content_type: str | None = None) -> None:
         nonlocal pending_image_ref
         if not lines:
             return
+        if (
+            force_content_type is None
+            and not lines[0].startswith("[TABLE]")
+            and not all(line.startswith("|") for line in lines)
+        ):
+            segmented = _segment_inline_table_runs(lines, page=page)
+            if segmented is not None:
+                for _, segment_lines in segmented:
+                    _append_content_block(segment_lines)
+                return
 
         full_block = "\n".join(lines)
         content_type = force_content_type or "body_text"
@@ -263,12 +389,18 @@ def _iter_structured_blocks(document_text: str) -> list[_Block]:
                 content_type = "table"
                 protected = True
                 full_block, table_caption = _serialize_table_block(full_block)
-                table_id = _extract_numeric_id("Table", table_caption or full_block)
-                if table_caption and not table_id:
-                    table_id = f"table:p{page}" if page is not None else "table:unknown"
+                table_id = _extract_numeric_id("Table", table_caption) if table_caption else None
+                if not table_id:
+                    table_id = _next_table_id()
             elif all(line.startswith("|") for line in lines):
                 content_type = "table"
                 protected = True
+                table_id = _next_table_id()
+            elif (serialized := _serialize_unmarked_table(lines)) is not None:
+                content_type = "table"
+                protected = True
+                full_block = serialized
+                table_id = _next_table_id()
             elif _is_note_block(full_block):
                 content_type = "note"
                 protected = True

@@ -48,16 +48,67 @@ class HTMLParserTests(unittest.TestCase):
 
 
 class PDFParserTests(unittest.TestCase):
-    def test_parse_pdf_file_missing_dependency_has_actionable_error(self) -> None:
+    def test_parse_pdf_file_uses_pdfplumber_primary_extraction(self) -> None:
+        class _FakePage:
+            images = []
+
+            def extract_text(self) -> str:
+                return "Section 10.5 Windows\nPerformance table follows"
+
+            def extract_tables(self) -> list[list[list[str]]]:
+                return [[["Performance Measure", "CZ2", "CZ3", "CZ4"], ["U-Factor", "0.65", "0.50", "0.35"]]]
+
+        class _FakeDoc:
+            pages = [_FakePage()]
+
+            def __enter__(self) -> "_FakeDoc":
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> None:
+                return None
+
+        class _FakePdfPlumber:
+            @staticmethod
+            def open(_: str) -> _FakeDoc:
+                return _FakeDoc()
+
+        with patch("app.ingestion.parsers.pdf._require_pdfplumber", return_value=_FakePdfPlumber):
+            parsed = parse_pdf_file("dummy.pdf")
+
+        self.assertIn("## Page 1", parsed)
+        self.assertIn("| Performance Measure | CZ2 | CZ3 | CZ4 |", parsed)
+        self.assertNotIn("[TABLE]", parsed)
+
+    def test_parse_pdf_file_falls_back_to_pypdf_when_pdfplumber_unusable(self) -> None:
+        class _FakePage:
+            images = []
+
+            def extract_text(self) -> str:
+                return "Chapter 1 Intro"
+
+        class _FakeReader:
+            pages = [_FakePage()]
+
         with patch(
+            "app.ingestion.parsers.pdf._extract_with_pdfplumber",
+            return_value="## Page 1",
+        ), patch(
             "app.ingestion.parsers.pdf._require_pypdf",
-            side_effect=ImportError(
-                "PDF ingestion requires 'pypdf'. Install it with `pip install pypdf`."
-            ),
+            return_value=lambda _: _FakeReader(),
         ):
-            with self.assertRaises(ImportError) as context:
+            parsed = parse_pdf_file("dummy.pdf")
+
+        self.assertIn("Chapter 1 Intro", parsed)
+
+    def test_parse_pdf_file_missing_dependency_has_actionable_error(self) -> None:
+        with patch("app.ingestion.parsers.pdf._extract_with_pdfplumber", side_effect=ImportError("missing pdfplumber")), patch(
+            "app.ingestion.parsers.pdf._extract_with_pypdf",
+            side_effect=ImportError("PDF ingestion requires 'pypdf'. Install it with `pip install pypdf`."),
+        ):
+            with self.assertRaises(RuntimeError) as context:
                 parse_pdf_file("dummy.pdf")
 
+        self.assertIn("pdfplumber", str(context.exception))
         self.assertIn("pip install pypdf", str(context.exception))
 
 

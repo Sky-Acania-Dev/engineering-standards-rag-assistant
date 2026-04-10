@@ -5,9 +5,9 @@ from collections import Counter
 
 
 def _normalize_page_artifacts(line: str) -> str:
-    collapsed = " ".join(line.split())
-    collapsed = re.sub(r"\b(\d+)\s*\|\s*P\s*a\s*g\s*e\b", r"Page \1", collapsed, flags=re.IGNORECASE)
-    return collapsed.strip()
+    trimmed = line.strip()
+    trimmed = re.sub(r"\b(\d+)\s*\|\s*P\s*a\s*g\s*e\b", r"Page \1", trimmed, flags=re.IGNORECASE)
+    return trimmed
 
 
 def _is_probable_noise(line: str) -> bool:
