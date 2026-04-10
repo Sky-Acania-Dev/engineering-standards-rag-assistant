@@ -6,6 +6,15 @@ from difflib import SequenceMatcher
 from typing import Iterable
 
 
+
+@dataclass(frozen=True)
+class FootnoteMeta:
+    id: str
+    content: str
+    anchor_text: str
+    page: int | None = None
+
+
 @dataclass(frozen=True)
 class TextChunk:
     chunk_id: int
@@ -21,6 +30,7 @@ class TextChunk:
     figure_ref: str | None = None
     prev_chunk_id: int | None = None
     next_chunk_id: int | None = None
+    footnotes: tuple[FootnoteMeta, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -518,6 +528,61 @@ def _deduplicate_chunks(chunks: list[TextChunk]) -> list[TextChunk]:
     return linked
 
 
+
+
+def _extract_embedded_footnote_defs(document_text: str) -> tuple[str, dict[tuple[int | None, str], FootnoteMeta]]:
+    footnotes: dict[tuple[int | None, str], FootnoteMeta] = {}
+    kept_lines: list[str] = []
+    pattern = re.compile(r"^\[FNDEF\s+page=(?P<page>\d+)\s+id=(?P<id>\d{1,3})\s+anchor=(?P<anchor>[^\]]*)\]\s*(?P<content>.*)$")
+    for line in document_text.splitlines():
+        match = pattern.match(line.strip())
+        if not match:
+            kept_lines.append(line)
+            continue
+        page = int(match.group("page"))
+        note_id = match.group("id")
+        footnotes[(page, note_id)] = FootnoteMeta(
+            id=note_id,
+            content=match.group("content").strip(),
+            anchor_text=match.group("anchor").strip(),
+            page=page,
+        )
+    return "\n".join(kept_lines), footnotes
+
+
+def _attach_chunk_footnotes(chunks: list[TextChunk], footnotes: dict[tuple[int | None, str], FootnoteMeta]) -> list[TextChunk]:
+    result: list[TextChunk] = []
+    marker_pattern = re.compile(r"\[fn:(\d{1,3})\]")
+    for chunk in chunks:
+        ids = marker_pattern.findall(chunk.text)
+        if not ids:
+            result.append(chunk)
+            continue
+        unique: list[FootnoteMeta] = []
+        seen: set[tuple[str, str]] = set()
+        for note_id in ids:
+            page_span = [p for p in (chunk.page_start, chunk.page_end) if p is not None]
+            candidates: list[FootnoteMeta] = []
+            if page_span:
+                for page in range(min(page_span), max(page_span) + 1):
+                    note = footnotes.get((page, note_id))
+                    if note is not None:
+                        candidates.append(note)
+            else:
+                for (page, key_id), note in footnotes.items():
+                    if key_id == note_id and page is None:
+                        candidates.append(note)
+            if not candidates:
+                continue
+            note = candidates[0]
+            dedupe_key = (note.id, note.content)
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            unique.append(note)
+        result.append(replace(chunk, footnotes=tuple(unique)))
+    return result
+
 def chunk_document_by_section(
     document_text: str,
     *,
@@ -533,7 +598,8 @@ def chunk_document_by_section(
     if hard_split_ratio < 1:
         raise ValueError("hard_split_ratio must be >= 1")
 
-    blocks = _iter_structured_blocks(document_text)
+    cleaned_text, embedded_footnotes = _extract_embedded_footnote_defs(document_text)
+    blocks = _iter_structured_blocks(cleaned_text)
     chunks: list[TextChunk] = []
     chunk_id = 0
 
@@ -732,7 +798,8 @@ def chunk_document_by_section(
     _emit_toc_buffer()
     _flush_body_chunks()
 
-    return _deduplicate_chunks(chunks)
+    deduped = _deduplicate_chunks(chunks)
+    return _attach_chunk_footnotes(deduped, embedded_footnotes)
 
 
 def chunks_to_text(chunks: Iterable[TextChunk]) -> list[str]:

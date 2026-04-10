@@ -2,6 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import os
+
+from app.ingestion.parsers.char_superscript_detector import detect_superscript_anchors
+from app.ingestion.parsers.footnote_linker import link_anchors_to_bodies
+from app.ingestion.parsers.footnote_region_detector import detect_footnote_bodies
+from app.ingestion.parsers.pdfplumber_layout import build_visual_lines, extract_page_chars
+from app.ingestion.parsers.text_reconstructor import reconstruct_page_text
 
 
 def _require_pdfplumber() -> Any:
@@ -77,16 +84,42 @@ def _inject_tables_into_text_lines(page_text_lines: list[str], tables: list[list
 def _extract_structured_page_text_pdfplumber(page: Any, page_number: int) -> str:
     lines = [f"## Page {page_number}"]
 
-    page_text = (page.extract_text() or "").strip()
+    chars = extract_page_chars(page, page_number)
     page_text_lines: list[str] = []
-    if page_text:
-        for raw_line in page_text.splitlines():
-            line = raw_line.strip()
-            if line:
-                page_text_lines.append(line)
+    resolved_for_page = []
+    if chars:
+        visual_lines = build_visual_lines(chars)
+        anchors = detect_superscript_anchors(visual_lines)
+        page_height = float(getattr(page, "height", 0.0) or 0.0)
+        footnote_bodies, footnote_line_indexes = detect_footnote_bodies(visual_lines, page_height=page_height)
+        resolved_for_page, unresolved = link_anchors_to_bodies(anchors, footnote_bodies)
+        reconstructed = reconstruct_page_text(
+            visual_lines,
+            resolved=resolved_for_page,
+            unresolved=unresolved,
+            footnote_line_indexes=footnote_line_indexes,
+        )
+        page_text_lines = reconstructed.lines
+
+        if os.getenv("PDF_FOOTNOTE_DEBUG", "").lower() in {"1", "true", "yes"}:
+            lines.append("[DEBUG] line_count=" + str(len(visual_lines)))
+            lines.append("[DEBUG] anchors=" + str(len(anchors)))
+            lines.append("[DEBUG] resolved=" + str(len(resolved_for_page)))
+            lines.append("[DEBUG] dropped_unresolved=" + str(len(unresolved)))
+    else:
+        page_text = (page.extract_text() or "").strip()
+        if page_text:
+            for raw_line in page_text.splitlines():
+                line = raw_line.strip()
+                if line:
+                    page_text_lines.append(line)
 
     table_data = page.extract_tables() or []
     lines.extend(_inject_tables_into_text_lines(page_text_lines, table_data))
+
+    for footnote in resolved_for_page:
+        serialized = f"[FNDEF page={page_number} id={footnote.label} anchor={footnote.anchor_text}] {footnote.content}"
+        lines.append(serialized)
 
     image_count = len(getattr(page, "images", []) or [])
     if image_count:
