@@ -465,6 +465,31 @@ Chapter 6: Heating, Ventilation, and Air Conditioning Systems (HVAC)
         # Section metadata must remain stable for child chunks of the same large section.
         self.assertTrue(all(chunk.section == "6.1 General Requirements" for chunk in body_chunks))
 
+    def test_soft_chunk_policy_prefers_paragraph_boundary(self) -> None:
+        paragraph1 = " ".join(f"a{i}" for i in range(360))
+        paragraph2 = " ".join(f"b{i}" for i in range(360))
+        paragraph3 = " ".join(f"c{i}" for i in range(360))
+        document = f"""## Page 10
+
+Chapter 7: Roofing Systems and Attics
+
+7.1 General Requirements
+
+{paragraph1}
+
+{paragraph2}
+
+{paragraph3}
+"""
+        chunks = chunk_document_by_section(document, chunk_size=700, overlap=50)
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+
+        self.assertGreaterEqual(len(body_chunks), 2)
+        # Soft split should happen at paragraph boundary after first two paragraphs.
+        self.assertTrue(any("a0" in chunk.text and "b359" in chunk.text for chunk in body_chunks))
+        self.assertTrue(any("c0" in chunk.text for chunk in body_chunks))
+        self.assertTrue(all(chunk.token_count <= 875 for chunk in body_chunks))
+
 
 if __name__ == "__main__":
     unittest.main()

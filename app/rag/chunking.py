@@ -431,6 +431,8 @@ def chunk_document_by_section(
         nonlocal body_units, chunk_id
         if not body_units:
             return
+        soft_limit = max(1, int(chunk_size * 0.7))
+        hard_limit = max(chunk_size + 1, int(chunk_size * 1.25))
 
         def emit_tokens(tokens: list[tuple[str, int | None]]) -> None:
             nonlocal chunk_id
@@ -469,7 +471,12 @@ def chunk_document_by_section(
                     current = unit_tokens
                 continue
 
-            if current and len(current) + len(unit_tokens) > chunk_size:
+            projected = len(current) + len(unit_tokens)
+            if current and projected > hard_limit:
+                emit_tokens(current)
+                current = current[-overlap:] if overlap else []
+            elif current and projected > chunk_size and len(current) >= soft_limit:
+                # Soft policy: prefer splitting at this paragraph boundary.
                 emit_tokens(current)
                 current = current[-overlap:] if overlap else []
             current.extend(unit_tokens)
