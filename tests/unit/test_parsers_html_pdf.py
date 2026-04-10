@@ -76,8 +76,8 @@ class PDFParserTests(unittest.TestCase):
             parsed = parse_pdf_file("dummy.pdf")
 
         self.assertIn("## Page 1", parsed)
-        self.assertIn("[TABLE]", parsed)
         self.assertIn("| Performance Measure | CZ2 | CZ3 | CZ4 |", parsed)
+        self.assertNotIn("[TABLE]", parsed)
 
     def test_parse_pdf_file_falls_back_to_pypdf_when_pdfplumber_unusable(self) -> None:
         class _FakePage:

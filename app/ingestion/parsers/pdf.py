@@ -24,33 +24,69 @@ def _require_pypdf() -> Any:
     return PdfReader
 
 
-def _table_to_markdown_lines(table: list[list[str | None]]) -> list[str]:
+def _table_rows(table: list[list[str | None]]) -> list[list[str]]:
     rows = [[(cell or "").strip() for cell in row] for row in table if row]
     rows = [row for row in rows if any(cell for cell in row)]
     if not rows:
         return []
-
     width = max(len(row) for row in rows)
-    normalized_rows = [row + [""] * (width - len(row)) for row in rows]
-    markdown_rows = [f"| {' | '.join(row)} |" for row in normalized_rows]
-    return ["[TABLE]", *markdown_rows, "[/TABLE]"]
+    return [row + [""] * (width - len(row)) for row in rows]
+
+
+def _table_to_markdown_lines(table: list[list[str | None]]) -> list[str]:
+    normalized_rows = _table_rows(table)
+    if not normalized_rows:
+        return []
+    return [f"| {' | '.join(row)} |" for row in normalized_rows]
+
+
+def _normalize_match_line(line: str) -> str:
+    return " ".join(line.split()).strip().lower()
+
+
+def _inject_tables_into_text_lines(page_text_lines: list[str], tables: list[list[list[str | None]]]) -> list[str]:
+    if not tables:
+        return page_text_lines
+    lines = list(page_text_lines)
+    for table in tables:
+        rows = _table_rows(table)
+        if not rows:
+            continue
+        plain_rows = [" ".join(cell for cell in row if cell).strip() for row in rows]
+        markdown_rows = [f"| {' | '.join(row)} |" for row in rows]
+        inserted = False
+
+        for idx in range(0, max(0, len(lines) - len(plain_rows) + 1)):
+            if _normalize_match_line(lines[idx]) != _normalize_match_line(plain_rows[0]):
+                continue
+            if all(
+                _normalize_match_line(lines[idx + offset]) == _normalize_match_line(plain_rows[offset])
+                for offset in range(len(plain_rows))
+            ):
+                lines[idx : idx + len(plain_rows)] = markdown_rows
+                inserted = True
+                break
+
+        if not inserted:
+            if lines and lines[-1]:
+                lines.append("")
+            lines.extend(markdown_rows)
+    return lines
 
 
 def _extract_structured_page_text_pdfplumber(page: Any, page_number: int) -> str:
     lines = [f"## Page {page_number}"]
 
     page_text = (page.extract_text() or "").strip()
+    page_text_lines: list[str] = []
     if page_text:
         for raw_line in page_text.splitlines():
             line = raw_line.strip()
             if line:
-                lines.append(line)
+                page_text_lines.append(line)
 
-    for table in page.extract_tables() or []:
-        table_lines = _table_to_markdown_lines(table)
-        if table_lines:
-            lines.extend(table_lines)
-            lines.append("")
+    table_data = page.extract_tables() or []
+    lines.extend(_inject_tables_into_text_lines(page_text_lines, table_data))
 
     image_count = len(getattr(page, "images", []) or [])
     if image_count:

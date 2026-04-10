@@ -100,19 +100,19 @@ def _serialize_table_block(block: str) -> tuple[str, str | None]:
     if not rows:
         return block, caption
 
-    header = rows[0]
-    data_rows = rows[1:]
+    normalized: list[list[str]] = []
+    width = max(len(row) for row in rows)
+    for row in rows:
+        if set(row) <= {"---", "--", "-"}:
+            continue
+        normalized.append(row + [""] * (width - len(row)))
+    if not normalized:
+        return block, caption
+
     rendered: list[str] = []
     if caption:
         rendered.append(f"Table caption: {caption}")
-    rendered.append("Table columns: " + "; ".join(header))
-
-    for idx, row in enumerate(data_rows, start=1):
-        if set(row) <= {"---", "--", "-"}:
-            continue
-        pairs = [f"{header[col_idx] if col_idx < len(header) else f'col_{col_idx + 1}'}={value}" for col_idx, value in enumerate(row)]
-        rendered.append(f"Row {idx}: " + "; ".join(pairs))
-
+    rendered.extend(f"| {' | '.join(row)} |" for row in normalized)
     return "\n".join(rendered), caption
 
 
@@ -247,7 +247,7 @@ def _table_row_cells(line: str) -> list[str] | None:
     return None
 
 
-def _serialize_unmarked_table(lines: list[str], *, page: int | None) -> tuple[str, str | None] | None:
+def _serialize_unmarked_table(lines: list[str]) -> str | None:
     header = _table_row_cells(lines[0]) if lines else None
     if header is None:
         return None
@@ -279,7 +279,7 @@ def _serialize_unmarked_table(lines: list[str], *, page: int | None) -> tuple[st
     separator = "| " + " | ".join("---" for _ in header) + " |"
     rendered = ["| " + " | ".join(header) + " |", separator]
     rendered.extend("| " + " | ".join(row) + " |" for row in rows[1:])
-    return "\n".join(rendered), f"table:p{page}" if page is not None else "table:unknown"
+    return "\n".join(rendered)
 
 
 def _segment_inline_table_runs(lines: list[str], *, page: int | None) -> list[tuple[str, list[str]]] | None:
@@ -300,7 +300,7 @@ def _segment_inline_table_runs(lines: list[str], *, page: int | None) -> list[tu
         while idx < len(lines) and _table_row_cells(lines[idx]) is not None:
             idx += 1
         run = lines[start:idx]
-        if len(run) >= 3 and _serialize_unmarked_table(run, page=page) is not None:
+        if len(run) >= 3 and _serialize_unmarked_table(run) is not None:
             segments.append(("table", run))
         else:
             segments.append(("body", run))
@@ -329,6 +329,14 @@ def _iter_structured_blocks(document_text: str) -> list[_Block]:
     section = "Section 1"
     section_path: tuple[str, ...] = ()
     pending_image_ref: str | None = None
+    table_seq_by_page: dict[int | None, int] = {}
+
+    def _next_table_id() -> str:
+        current = table_seq_by_page.get(page, 0) + 1
+        table_seq_by_page[page] = current
+        if page is not None:
+            return f"table:p{page}:{current}"
+        return f"table:unknown:{current}"
 
     def _append_content_block(lines: list[str], *, force_content_type: str | None = None) -> None:
         nonlocal pending_image_ref
@@ -383,15 +391,16 @@ def _iter_structured_blocks(document_text: str) -> list[_Block]:
                 full_block, table_caption = _serialize_table_block(full_block)
                 table_id = _extract_numeric_id("Table", table_caption) if table_caption else None
                 if not table_id:
-                    table_id = f"table:p{page}" if page is not None else "table:unknown"
+                    table_id = _next_table_id()
             elif all(line.startswith("|") for line in lines):
                 content_type = "table"
                 protected = True
-                table_id = f"table:p{page}" if page is not None else "table:unknown"
-            elif (serialized := _serialize_unmarked_table(lines, page=page)) is not None:
+                table_id = _next_table_id()
+            elif (serialized := _serialize_unmarked_table(lines)) is not None:
                 content_type = "table"
                 protected = True
-                full_block, table_id = serialized
+                full_block = serialized
+                table_id = _next_table_id()
             elif _is_note_block(full_block):
                 content_type = "note"
                 protected = True

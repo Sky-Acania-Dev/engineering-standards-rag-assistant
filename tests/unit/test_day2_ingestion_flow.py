@@ -223,8 +223,8 @@ Note: Keep spacing.
         table_chunks = [c for c in chunks if c.content_type == "table"]
         self.assertEqual(1, len(table_chunks))
         self.assertIn("Table caption: Table 3. Test limits", table_chunks[0].text)
-        self.assertIn("Table columns: Parameter; Limit", table_chunks[0].text)
-        self.assertIn("Row 2: Parameter=Voltage; Limit=120V", table_chunks[0].text)
+        self.assertIn("| Parameter | Limit |", table_chunks[0].text)
+        self.assertIn("| Voltage | 120V |", table_chunks[0].text)
 
         note_chunks = [c for c in chunks if c.content_type == "note"]
         self.assertEqual(1, len(note_chunks))
@@ -252,7 +252,7 @@ SHGC                 0.25 0.25 0.25
         table_chunks = [c for c in chunks if c.content_type == "table"]
 
         self.assertEqual(1, len(table_chunks))
-        self.assertEqual("table:p40", table_chunks[0].table_id)
+        self.assertEqual("table:p40:1", table_chunks[0].table_id)
         self.assertIn("| Performance Measure | CZ2 | CZ3 | CZ4 |", table_chunks[0].text)
         self.assertIn("| U-Factor | 0.40 | 0.35 | 0.30 |", table_chunks[0].text)
         self.assertEqual("10.5 Windows", table_chunks[0].section)
@@ -272,7 +272,7 @@ Storage Size in Gallons  Gas DWH EF  Electric DWH EF
         table_chunks = [c for c in chunks if c.content_type == "table"]
 
         self.assertEqual(1, len(table_chunks))
-        self.assertEqual("table:p21", table_chunks[0].table_id)
+        self.assertEqual("table:p21:1", table_chunks[0].table_id)
         self.assertIn("| Storage Size in Gallons | Gas DWH EF | Electric DWH EF |", table_chunks[0].text)
         self.assertIn("| 40 | 0.62 | 0.95 |", table_chunks[0].text)
         self.assertEqual("5.7 Domestic Water Heaters (DWH)", table_chunks[0].section)
