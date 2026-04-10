@@ -91,6 +91,20 @@ class FootnoteLayoutPipelineTests(unittest.TestCase):
         self.assertTrue(links)
         self.assertEqual("the", links[0].anchor_text)
 
+    def test_token_level_baseline_handles_small_previous_token(self) -> None:
+        tokens = [
+            LayoutToken(page=1, text="Main", x0=10, x1=40, top=100, bottom=112, size=12, fontname="A", line_id=100, reading_order=0),
+            LayoutToken(page=1, text="text", x0=42, x1=68, top=100, bottom=112, size=12, fontname="A", line_id=100, reading_order=1),
+            LayoutToken(page=1, text="ref", x0=70, x1=82, top=101, bottom=110, size=9, fontname="A", line_id=100, reading_order=2),
+            LayoutToken(page=1, text="3", x0=83, x1=85, top=98, bottom=104, size=9, fontname="A", line_id=100, reading_order=3),
+            LayoutToken(page=1, text="3", x0=10, x1=12, top=760, bottom=768, size=8, fontname="A", line_id=760, reading_order=4),
+            LayoutToken(page=1, text="Footnote", x0=15, x1=60, top=760, bottom=768, size=8, fontname="A", line_id=760, reading_order=5),
+        ]
+        analysis = analyze_page_layout(tokens, page_height=800)
+        links = link_anchors_to_bodies(list(analysis.anchor_candidates), analysis.footnote_bodies)
+        self.assertTrue(links)
+        self.assertEqual(3, links[0].id)
+
     def test_plain_numeric_tokens_are_not_treated_as_superscripts(self) -> None:
         tokens = [
             LayoutToken(page=1, text="Texas", x0=10, x1=30, top=100, bottom=112, size=12, fontname="A", line_id=100, reading_order=0),

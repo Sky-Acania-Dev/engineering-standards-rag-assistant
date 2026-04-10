@@ -40,6 +40,20 @@ class PageAnalysis:
 def detect_superscript_anchors(tokens: list[LayoutToken], *, body_token_indexes: set[int] | None = None) -> tuple[list[AnchorCandidate], list[RejectedAnchor]]:
     anchors: list[AnchorCandidate] = []
     rejected: list[RejectedAnchor] = []
+    line_alpha_sizes: dict[int, list[float]] = {}
+    line_alpha_tops: dict[int, list[float]] = {}
+    for token in tokens:
+        cleaned = token.text.strip().strip(".,;:()[]")
+        if cleaned and not re.fullmatch(r"\d{1,3}", cleaned):
+            line_alpha_sizes.setdefault(token.line_id, []).append(token.size)
+            line_alpha_tops.setdefault(token.line_id, []).append(token.top)
+
+    def _line_median(values: list[float]) -> float | None:
+        if not values:
+            return None
+        ordered = sorted(values)
+        return ordered[len(ordered) // 2]
+
     for idx in range(1, len(tokens)):
         if body_token_indexes is not None and idx not in body_token_indexes:
             continue
@@ -65,8 +79,14 @@ def detect_superscript_anchors(tokens: list[LayoutToken], *, body_token_indexes:
         ):
             rejected.append(RejectedAnchor(token_index=idx, reason="protected_token_neighbor"))
             continue
-        size_ratio = (token.size / prev.size) if prev.size > 0 else 1.0
-        raised = token.top + 0.2 < prev.top
+        baseline_line = prev.line_id if token.line_id != prev.line_id else token.line_id
+        baseline_size = _line_median(line_alpha_sizes.get(baseline_line, [])) or (prev.size if prev.size > 0 else token.size)
+        baseline_top = _line_median(line_alpha_tops.get(baseline_line, []))
+        if baseline_top is None:
+            baseline_top = prev.top
+
+        size_ratio = (token.size / baseline_size) if baseline_size > 0 else 1.0
+        raised = token.top + 0.2 < baseline_top
         score = 0.0
         if size_ratio <= 0.92:
             score += 0.45
