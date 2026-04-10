@@ -422,6 +422,30 @@ Foundation requirements begin here.
         self.assertIn("Chapter 3: Foundations", body_chunks[0].section_path)
         self.assertNotIn("Foundations9", body_chunks[0].text)
 
+    def test_mid_block_heading_after_url_note_updates_section_metadata(self) -> None:
+        document = """## Page 12
+2.7 Ramps
+If installed, ramps shall have a maximum slope.
+8 http://www.statutes.example/ramp
+2.8 Vermin and Insects
+The premises shall be free from infestations.
+2.9 Landscaping for New Construction and Additions
+Landscaping requirements apply.
+Chapter 3: Foundations9
+3.1 General Requirements
+Foundation requirements begin here.
+"""
+        chunks = chunk_document_by_section(document, chunk_size=9, overlap=3)
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+
+        self.assertTrue(any(chunk.section == "2.8 Vermin and Insects" for chunk in body_chunks))
+        self.assertTrue(any(chunk.section == "3.1 General Requirements" for chunk in body_chunks))
+
+        chapter3_chunks = [chunk for chunk in body_chunks if chunk.section == "3.1 General Requirements"]
+        self.assertTrue(chapter3_chunks)
+        self.assertTrue(all("Chapter 3: Foundations" in chunk.section_path for chunk in chapter3_chunks))
+        self.assertTrue(all("2.7 Ramps" not in chunk.section_path for chunk in chapter3_chunks))
+
     def test_overlap_preserved_without_cross_section_metadata_leak(self) -> None:
         sec1 = " ".join(f"s1_{i}" for i in range(16))
         sec2 = " ".join(f"s2_{i}" for i in range(16))

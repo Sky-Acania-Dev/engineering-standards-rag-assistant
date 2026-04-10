@@ -208,97 +208,62 @@ def _iter_structured_blocks(document_text: str) -> list[_Block]:
     section_path: tuple[str, ...] = ()
     pending_image_ref: str | None = None
 
-    for raw_block in raw_blocks:
-        lines = [_normalize_line_noise(line) for line in raw_block.splitlines()]
-        lines = [line for line in lines if line]
+    def _append_content_block(lines: list[str], *, force_content_type: str | None = None) -> None:
+        nonlocal pending_image_ref
         if not lines:
-            continue
-
-        cursor = 0
-        while cursor < len(lines):
-            current = lines[cursor]
-            page_match = re.match(r"^##\s+Page\s+(\d+)\b", current, flags=re.IGNORECASE)
-            if page_match:
-                page = int(page_match.group(1))
-                cursor += 1
-                continue
-            if _looks_like_toc_line(current):
-                break
-
-            heading_detected = _detect_structural_heading(current)
-            if heading_detected is None:
-                break
-
-            level, heading_text = heading_detected
-            section, section_path = _update_heading_stack(heading_stack, level=level, heading_text=heading_text)
-            blocks.append(
-                _Block(
-                    text=heading_text,
-                    content_type="section_header",
-                    page_start=page,
-                    page_end=page,
-                    section=section,
-                    section_path=section_path,
-                    heading_level=level,
-                    protected=True,
-                )
-            )
-            cursor += 1
-
-        lines = lines[cursor:]
-        if not lines:
-            continue
+            return
 
         full_block = "\n".join(lines)
-        content_type = "body_text"
-        protected = False
+        content_type = force_content_type or "body_text"
+        protected = force_content_type == "toc"
         table_id: str | None = None
         figure_id: str | None = None
         figure_ref: str | None = None
 
-        if _looks_like_toc_line(lines[0]) or any(_looks_like_toc_line(line) for line in lines):
-            content_type = "toc"
-            protected = True
-        elif lines[0].startswith("[IMAGE]"):
-            pending_image_ref = _parse_image_ref(full_block)
-            blocks.append(
-                _Block(
-                    text=full_block,
-                    content_type="header_footer_noise",
-                    page_start=page,
-                    page_end=page,
-                    section=section,
-                    section_path=section_path,
-                    figure_ref=pending_image_ref,
-                    protected=True,
+        if force_content_type is None:
+            if _looks_like_toc_line(lines[0]) or any(_looks_like_toc_line(line) for line in lines):
+                content_type = "toc"
+                protected = True
+            elif lines[0].startswith("[IMAGE]"):
+                pending_image_ref = _parse_image_ref(full_block)
+                blocks.append(
+                    _Block(
+                        text=full_block,
+                        content_type="header_footer_noise",
+                        page_start=page,
+                        page_end=page,
+                        section=section,
+                        section_path=section_path,
+                        figure_ref=pending_image_ref,
+                        protected=True,
+                    )
                 )
-            )
-            continue
-        elif lines[0].startswith("[IMAGE_CAPTION]"):
-            caption = lines[0].replace("[IMAGE_CAPTION]", "", 1).strip()
-            content_type = "figure_caption"
-            protected = True
-            figure_id = _extract_numeric_id("Figure", caption)
-            figure_ref = pending_image_ref
-        elif lines[0].startswith("[TABLE]"):
-            content_type = "table"
-            protected = True
-            full_block, table_caption = _serialize_table_block(full_block)
-            table_id = _extract_numeric_id("Table", table_caption or full_block)
-            if table_caption and not table_id:
-                table_id = f"table:p{page}" if page is not None else "table:unknown"
-        elif all(line.startswith("|") for line in lines):
-            content_type = "table"
-            protected = True
-        elif _is_note_block(full_block):
-            content_type = "note"
-            protected = True
-        elif _is_list_block(lines):
-            content_type = "list"
-            protected = True
-        elif _is_image_artifact_block(full_block):
-            content_type = "image_artifact"
-            protected = True
+                return
+            elif lines[0].startswith("[IMAGE_CAPTION]"):
+                caption = lines[0].replace("[IMAGE_CAPTION]", "", 1).strip()
+                content_type = "figure_caption"
+                protected = True
+                figure_id = _extract_numeric_id("Figure", caption)
+                figure_ref = pending_image_ref
+            elif lines[0].startswith("[TABLE]"):
+                content_type = "table"
+                protected = True
+                full_block, table_caption = _serialize_table_block(full_block)
+                table_id = _extract_numeric_id("Table", table_caption or full_block)
+                if table_caption and not table_id:
+                    table_id = f"table:p{page}" if page is not None else "table:unknown"
+            elif all(line.startswith("|") for line in lines):
+                content_type = "table"
+                protected = True
+            elif _is_note_block(full_block):
+                content_type = "note"
+                protected = True
+            elif _is_list_block(lines):
+                content_type = "list"
+                protected = True
+            elif _is_image_artifact_block(full_block):
+                content_type = "image_artifact"
+                protected = True
 
         blocks.append(
             _Block(
@@ -314,6 +279,56 @@ def _iter_structured_blocks(document_text: str) -> list[_Block]:
                 protected=protected,
             )
         )
+
+    for raw_block in raw_blocks:
+        lines = [_normalize_line_noise(line) for line in raw_block.splitlines()]
+        lines = [line for line in lines if line]
+        if not lines:
+            continue
+
+        body_buffer: list[str] = []
+        cursor = 0
+        while cursor < len(lines):
+            current = lines[cursor]
+            page_match = re.match(r"^##\s+Page\s+(\d+)\b", current, flags=re.IGNORECASE)
+            if page_match:
+                _append_content_block(body_buffer)
+                body_buffer = []
+                page = int(page_match.group(1))
+                cursor += 1
+                continue
+
+            if _looks_like_toc_line(current):
+                _append_content_block(body_buffer)
+                body_buffer = []
+                _append_content_block(lines[cursor:], force_content_type="toc")
+                break
+
+            heading_detected = _detect_structural_heading(current)
+            if heading_detected is not None:
+                _append_content_block(body_buffer)
+                body_buffer = []
+                level, heading_text = heading_detected
+                section, section_path = _update_heading_stack(heading_stack, level=level, heading_text=heading_text)
+                blocks.append(
+                    _Block(
+                        text=heading_text,
+                        content_type="section_header",
+                        page_start=page,
+                        page_end=page,
+                        section=section,
+                        section_path=section_path,
+                        heading_level=level,
+                        protected=True,
+                    )
+                )
+                cursor += 1
+                continue
+
+            body_buffer.append(current)
+            cursor += 1
+
+        _append_content_block(body_buffer)
 
     return blocks
 
