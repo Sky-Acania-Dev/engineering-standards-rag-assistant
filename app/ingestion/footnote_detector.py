@@ -45,7 +45,9 @@ def detect_superscript_anchors(tokens: list[LayoutToken], *, body_token_indexes:
             continue
         token = tokens[idx]
         prev = tokens[idx - 1]
-        if token.line_id != prev.line_id:
+        gap = token.x0 - prev.x1
+        same_run = token.line_id == prev.line_id or (0 <= gap <= 1.5 and token.top < prev.bottom + 0.8)
+        if not same_run:
             continue
         if not re.fullmatch(r"\d{1,3}", token.text.strip()):
             continue
@@ -63,7 +65,6 @@ def detect_superscript_anchors(tokens: list[LayoutToken], *, body_token_indexes:
         ):
             rejected.append(RejectedAnchor(token_index=idx, reason="protected_token_neighbor"))
             continue
-        gap = token.x0 - prev.x1
         size_ratio = (token.size / prev.size) if prev.size > 0 else 1.0
         raised = token.top + 0.5 < prev.top
         score = 0.0
@@ -173,9 +174,10 @@ def analyze_page_layout(tokens: list[LayoutToken], *, page_height: float) -> Pag
                 continue
             tail_idx = sorted_indexes[-1]
             tail = tokens[tail_idx]
-            if not re.fullmatch(r"\d{1,2}", tail.text.strip()):
+            raw_tail = tail.text.strip().rstrip(").,;:")
+            if not re.fullmatch(r"\d{1,2}", raw_tail):
                 continue
-            note_id = int(tail.text)
+            note_id = int(raw_tail)
             if note_id not in body_ids:
                 continue
             if tail.top >= page_height * 0.78:
@@ -183,10 +185,11 @@ def analyze_page_layout(tokens: list[LayoutToken], *, page_height: float) -> Pag
             if len(sorted_indexes) < 2:
                 continue
             prev = tokens[sorted_indexes[-2]]
-            if not re.fullmatch(r"[A-Za-z][A-Za-z\-]{3,}", prev.text.strip().strip(".,;:()[]")):
+            prev_clean = prev.text.strip().strip(".,;:()[]")
+            if not re.fullmatch(r"[A-Za-z][A-Za-z'\-]{1,}", prev_clean):
                 continue
             gap = tail.x0 - prev.x1
-            if gap < 0 or gap > 6:
+            if gap < 0 or gap > 12:
                 continue
             if any(existing.token_index == tail_idx for existing in anchors):
                 continue

@@ -66,6 +66,31 @@ class FootnoteLayoutPipelineTests(unittest.TestCase):
         self.assertEqual("Requirements", metadata[0]["anchor_text"])
         self.assertEqual("https://example.org/spec", metadata[0]["content"])
 
+    def test_detects_split_superscript_even_if_line_id_differs(self) -> None:
+        tokens = [
+            LayoutToken(page=1, text="outside", x0=10, x1=50, top=100, bottom=112, size=12, fontname="A", line_id=100, reading_order=0),
+            LayoutToken(page=1, text="16", x0=50.5, x1=55, top=96, bottom=102, size=8, fontname="A", line_id=96, reading_order=1),
+            LayoutToken(page=1, text="16", x0=10, x1=15, top=760, bottom=768, size=8, fontname="A", line_id=760, reading_order=2),
+            LayoutToken(page=1, text="Footnote", x0=18, x1=60, top=760, bottom=768, size=8, fontname="A", line_id=760, reading_order=3),
+        ]
+        analysis = analyze_page_layout(tokens, page_height=800)
+        links = link_anchors_to_bodies(list(analysis.anchor_candidates), analysis.footnote_bodies)
+        self.assertTrue(links)
+        self.assertEqual(16, links[0].id)
+
+    def test_fallback_anchor_matches_two_digit_body_with_short_prev_word(self) -> None:
+        tokens = [
+            LayoutToken(page=1, text="outside", x0=10, x1=50, top=100, bottom=112, size=12, fontname="A", line_id=100, reading_order=0),
+            LayoutToken(page=1, text="the", x0=52, x1=72, top=100, bottom=112, size=12, fontname="A", line_id=100, reading_order=1),
+            LayoutToken(page=1, text="16", x0=74, x1=80, top=100, bottom=112, size=12, fontname="A", line_id=100, reading_order=2),
+            LayoutToken(page=1, text="16", x0=10, x1=15, top=760, bottom=768, size=8, fontname="A", line_id=760, reading_order=3),
+            LayoutToken(page=1, text="Footnote", x0=18, x1=60, top=760, bottom=768, size=8, fontname="A", line_id=760, reading_order=4),
+        ]
+        analysis = analyze_page_layout(tokens, page_height=800)
+        links = link_anchors_to_bodies(list(analysis.anchor_candidates), analysis.footnote_bodies)
+        self.assertTrue(links)
+        self.assertEqual("the", links[0].anchor_text)
+
     def test_plain_numeric_tokens_are_not_treated_as_superscripts(self) -> None:
         tokens = [
             LayoutToken(page=1, text="Texas", x0=10, x1=30, top=100, bottom=112, size=12, fontname="A", line_id=100, reading_order=0),
