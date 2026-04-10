@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Any, Iterable
 
 from app.rag.chunking import TextChunk
 
@@ -21,6 +21,7 @@ class ChunkMetadata:
     figure_ref: str | None = None
     prev_chunk_id: int | None = None
     next_chunk_id: int | None = None
+    footnotes: tuple[dict[str, Any], ...] = ()
 
 
 def build_chunk_metadata(
@@ -46,6 +47,7 @@ def build_chunk_metadata(
             figure_ref=chunk.figure_ref,
             prev_chunk_id=chunk.prev_chunk_id,
             next_chunk_id=chunk.next_chunk_id,
+            footnotes=chunk.footnotes,
         )
         for chunk in chunks
     ]

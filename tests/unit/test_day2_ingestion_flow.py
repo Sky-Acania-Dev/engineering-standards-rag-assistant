@@ -571,6 +571,64 @@ This continuation must stay in section 10.5.
         self.assertFalse(any(chunk.section.startswith("745.2 Federally funded") for chunk in chunks))
         self.assertTrue(any("745.2 Federally funded" in chunk.text for chunk in body_chunks))
 
+    def test_url_footnote_is_patched_and_dump_removed_with_metadata(self) -> None:
+        document = """## Page 1
+1.1 Definitions
+See implementation guidance1 before proceeding.
+1 https://example.org/guidance
+"""
+        chunks = chunk_document_by_section(document, chunk_size=120, overlap=20)
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+
+        self.assertEqual(1, len(body_chunks))
+        self.assertIn("[Footnote 1: URL]", body_chunks[0].text)
+        self.assertNotIn("https://example.org/guidance", body_chunks[0].text)
+        self.assertNotIn("1 https://example.org/guidance", body_chunks[0].text)
+        self.assertEqual("url", body_chunks[0].footnotes[0]["type"])
+        self.assertEqual("https://example.org/guidance", body_chunks[0].footnotes[0]["url"])
+
+    def test_citation_footnote_uses_stable_code_reference_label(self) -> None:
+        document = """## Page 1
+1.1 Definitions
+Comply with the cited authority2 for this section.
+2 24 CFR 92.251 and IRC requirements apply.
+"""
+        chunks = chunk_document_by_section(document, chunk_size=120, overlap=20)
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+
+        self.assertIn("[Footnote 2: code reference]", body_chunks[0].text)
+        self.assertEqual("citation", body_chunks[0].footnotes[0]["type"])
+        self.assertEqual("code reference", body_chunks[0].footnotes[0]["inline_label"])
+        self.assertIn("24 CFR 92.251", body_chunks[0].footnotes[0]["full_text"])
+
+    def test_explanatory_footnote_is_rule_compressed_and_truncated(self) -> None:
+        document = """## Page 1
+1.1 Definitions
+Follow this requirement3 for the project scope.
+3 Additional guidance is available from the Texas Historical Commission regarding historic properties and coordination procedures.
+"""
+        chunks = chunk_document_by_section(document, chunk_size=120, overlap=20)
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+
+        self.assertIn("[Footnote 3: Additional guidance is available from the Texas Historical...]", body_chunks[0].text)
+        self.assertEqual("explanatory", body_chunks[0].footnotes[0]["type"])
+        self.assertTrue(body_chunks[0].footnotes[0]["full_text"].startswith("Additional guidance is available"))
+
+    def test_ip_like_decimal_strings_are_not_treated_as_headings(self) -> None:
+        document = """## Page 1
+10.5 Windows
+10.0.0.1 connection established
+10.1.1.1 Some text
+Continuation remains under Windows.
+"""
+        chunks = chunk_document_by_section(document, chunk_size=120, overlap=20)
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+
+        self.assertTrue(body_chunks)
+        self.assertTrue(all(chunk.section == "10.5 Windows" for chunk in body_chunks))
+        self.assertFalse(any(chunk.section.startswith("10.0.0.1") for chunk in chunks))
+        self.assertFalse(any(chunk.section.startswith("10.1.1.1") for chunk in chunks))
+
     def test_overlap_preserved_without_cross_section_metadata_leak(self) -> None:
         sec1 = " ".join(f"s1_{i}" for i in range(16))
         sec2 = " ".join(f"s2_{i}" for i in range(16))

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import re
 from difflib import SequenceMatcher
-from typing import Iterable
+from typing import Any, Iterable
 
 
 @dataclass(frozen=True)
@@ -21,6 +21,7 @@ class TextChunk:
     figure_ref: str | None = None
     prev_chunk_id: int | None = None
     next_chunk_id: int | None = None
+    footnotes: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,15 @@ class _Block:
     figure_ref: str | None = None
     heading_level: int | None = None
     protected: bool = False
+    footnotes: tuple[dict[str, Any], ...] = ()
+
+
+_FOOTNOTE_LINE_RE = re.compile(r"^(?P<id>\d{1,3})\s+(?P<text>.+)$")
+_URL_RE = re.compile(r"^(https?://\S+|www\.\S+)$", flags=re.IGNORECASE)
+_CITATION_RE = re.compile(
+    r"\b(irc|cfr|tac|hud|epa|usc|u\.s\.c|code|regulation|statute|admin(?:istrative)? code|§)\b",
+    flags=re.IGNORECASE,
+)
 
 
 def _tokenize(text: str) -> list[str]:
@@ -182,8 +192,11 @@ def _detect_structural_heading(line: str) -> tuple[int, str] | None:
             heading = f"{heading}: {section_title}"
         return 2, _normalize_heading_text(heading)
 
-    decimal_heading = re.match(r"^(\d{1,2}(?:\.\d+){1,3})\s+(.+)$", line)
+    decimal_heading = re.match(r"^(\d{1,2}(?:\.\d+){1,3})\s+([A-Z].+)$", line)
     if decimal_heading:
+        number = decimal_heading.group(1)
+        if re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", number):
+            return None
         depth = decimal_heading.group(1).count(".") + 3
         heading = f"{decimal_heading.group(1)} {decimal_heading.group(2)}"
         return min(depth, 6), _normalize_heading_text(heading)
@@ -338,10 +351,107 @@ def _iter_structured_blocks(document_text: str) -> list[_Block]:
             return f"table:p{page}:{current}"
         return f"table:unknown:{current}"
 
+    def _extract_trailing_footnotes(lines: list[str]) -> tuple[list[str], tuple[dict[str, Any], ...]]:
+        if len(lines) < 2:
+            return lines, ()
+        start = len(lines)
+        while start > 0 and _FOOTNOTE_LINE_RE.match(lines[start - 1].strip()):
+            start -= 1
+        if start == len(lines) or start == 0:
+            return lines, ()
+
+        trailing_lines = lines[start:]
+        parsed_trailing: list[tuple[int, str]] = []
+        for raw in trailing_lines:
+            match = _FOOTNOTE_LINE_RE.match(raw.strip())
+            if not match:
+                continue
+            footnote_id = int(match.group("id"))
+            full_text = " ".join(match.group("text").split()).strip()
+            parsed_trailing.append((footnote_id, full_text))
+
+        if not parsed_trailing:
+            return lines, ()
+        # Guardrail: table rows/noisy numeric runs can look like "id text" at
+        # page end. Require prose-like or URL-like content in every candidate.
+        if any(
+            (
+                not text
+                or bool(re.fullmatch(r"[\d.\-–\s/%]+", text))
+                or ("|" in text)
+            )
+            for _, text in parsed_trailing
+        ):
+            return lines, ()
+
+        body_lines = lines[:start]
+        body_text = "\n".join(body_lines)
+        resolved: list[dict[str, Any]] = []
+
+        for footnote_id, full_text in parsed_trailing:
+
+            footnote_type = "explanatory"
+            inline_label = ""
+            url: str | None = None
+            if _URL_RE.fullmatch(full_text):
+                footnote_type = "url"
+                inline_label = "URL"
+                url = full_text
+            elif _CITATION_RE.search(full_text):
+                footnote_type = "citation"
+                inline_label = "code reference"
+            else:
+                clause = re.split(r"[.;:]", full_text, maxsplit=1)[0].strip()
+                clause = re.sub(
+                    r"^(this|that|these)\s+(requirement|provision|note)\s+(applies|is)\s+",
+                    "",
+                    clause,
+                    flags=re.IGNORECASE,
+                )
+                words = clause.split()
+                inline_label = " ".join(words[:8]).strip()
+                if len(words) > 8:
+                    inline_label = f"{inline_label}..."
+                if len(inline_label) > 64 and not inline_label.endswith("..."):
+                    inline_label = inline_label[:61].rstrip() + "..."
+
+            patch = f"[Footnote {footnote_id}: {inline_label}]"
+            patched = False
+            for pattern in (
+                re.compile(rf"\[{footnote_id}\]"),
+                re.compile(rf"\({footnote_id}\)"),
+                re.compile(rf"(?<=\\w){footnote_id}(?=[\\s,.;:])"),
+                re.compile(rf"\b{footnote_id}\b"),
+            ):
+                body_text, count = pattern.subn(f" {patch}", body_text, count=1)
+                if count:
+                    patched = True
+                    break
+            if not patched and body_text.strip():
+                body_text = f"{body_text} {patch}".strip()
+
+            entry: dict[str, Any] = {
+                "id": footnote_id,
+                "type": footnote_type,
+                "full_text": full_text,
+                "inline_label": inline_label,
+            }
+            if url is not None:
+                entry["url"] = url
+            resolved.append(entry)
+
+        stripped_lines = [line for line in body_text.splitlines() if line.strip()]
+        return stripped_lines, tuple(resolved)
+
     def _append_content_block(lines: list[str], *, force_content_type: str | None = None) -> None:
         nonlocal pending_image_ref
         if not lines:
             return
+        resolved_footnotes: tuple[dict[str, Any], ...] = ()
+        if force_content_type is None:
+            lines, resolved_footnotes = _extract_trailing_footnotes(lines)
+            if not lines:
+                return
         if (
             force_content_type is None
             and not lines[0].startswith("[TABLE]")
@@ -423,6 +533,7 @@ def _iter_structured_blocks(document_text: str) -> list[_Block]:
                 figure_id=figure_id,
                 figure_ref=figure_ref,
                 protected=protected,
+                footnotes=resolved_footnotes,
             )
         )
 
@@ -539,7 +650,7 @@ def chunk_document_by_section(
 
     active_chapter: str | None = None
     active_section_heading: str | None = None
-    body_units: list[list[tuple[str, int | None]]] = []
+    body_units: list[tuple[list[tuple[str, int | None]], tuple[dict[str, Any], ...]]] = []
     body_section = "Section 1"
     body_section_path: tuple[str, ...] = ()
     toc_buffer: list[_Block] = []
@@ -595,7 +706,7 @@ def chunk_document_by_section(
         soft_limit = max(1, int(chunk_size * soft_split_ratio))
         hard_limit = max(chunk_size + 1, int(chunk_size * hard_split_ratio))
 
-        def emit_tokens(tokens: list[tuple[str, int | None]]) -> None:
+        def emit_tokens(tokens: list[tuple[str, int | None]], footnotes: tuple[dict[str, Any], ...]) -> None:
             nonlocal chunk_id
             chunk_pages = [page for _, page in tokens if page is not None]
             chunks.append(
@@ -608,13 +719,23 @@ def chunk_document_by_section(
                     page_end=chunk_pages[-1] if chunk_pages else None,
                     content_type="body_text",
                     section_path=body_section_path,
+                    footnotes=footnotes,
                 )
             )
             chunk_id += 1
 
         current: list[tuple[str, int | None]] = []
-        for unit in body_units:
-            unit_tokens = unit
+        current_footnotes: list[dict[str, Any]] = []
+
+        def _merge_footnotes(footnotes: tuple[dict[str, Any], ...]) -> None:
+            seen = {item.get("id") for item in current_footnotes}
+            for item in footnotes:
+                if item.get("id") in seen:
+                    continue
+                current_footnotes.append(item)
+                seen.add(item.get("id"))
+
+        for unit_tokens, unit_footnotes in body_units:
             if len(unit_tokens) > chunk_size:
                 if current:
                     # Avoid emitting tiny heading-only chunks; attach heading prefix
@@ -622,32 +743,38 @@ def chunk_document_by_section(
                     if len(current) <= max(8, overlap // 2):
                         unit_tokens = current + unit_tokens
                         current = []
+                        _merge_footnotes(unit_footnotes)
                     else:
-                        emit_tokens(current)
+                        emit_tokens(current, tuple(current_footnotes))
                         current = current[-overlap:] if overlap else []
+                        current_footnotes = []
                 while len(unit_tokens) > chunk_size:
-                    emit_tokens(unit_tokens[:chunk_size])
+                    emit_tokens(unit_tokens[:chunk_size], unit_footnotes)
                     unit_tokens = unit_tokens[chunk_size - overlap :] if overlap else unit_tokens[chunk_size:]
                 if unit_tokens:
                     current = unit_tokens
+                    _merge_footnotes(unit_footnotes)
                 continue
 
             projected = len(current) + len(unit_tokens)
             if current and projected > chunk_size and len(current) >= soft_limit:
                 # Soft policy: prefer splitting at this paragraph boundary.
-                emit_tokens(current)
+                emit_tokens(current, tuple(current_footnotes))
                 current = current[-overlap:] if overlap else []
+                current_footnotes = []
             elif current and projected > hard_limit:
                 # No section boundary was found by hard limit; fall back to
                 # normal target-sized split with overlap behavior.
                 merged = current + unit_tokens
-                emit_tokens(merged[:chunk_size])
+                emit_tokens(merged[:chunk_size], tuple(current_footnotes) + unit_footnotes)
                 current = merged[chunk_size - overlap :] if overlap else merged[chunk_size:]
+                current_footnotes = []
                 continue
             current.extend(unit_tokens)
+            _merge_footnotes(unit_footnotes)
 
         if current:
-            emit_tokens(current)
+            emit_tokens(current, tuple(current_footnotes))
 
         body_units = []
 
@@ -655,7 +782,7 @@ def chunk_document_by_section(
         nonlocal body_section, body_section_path, body_units
         body_section, body_section_path = _current_section_metadata()
         prefix = _body_heading_prefix(page)
-        body_units = [prefix] if prefix else []
+        body_units = [(prefix, ())] if prefix else []
 
     for block in blocks:
         if block.content_type == "toc":
@@ -720,6 +847,7 @@ def chunk_document_by_section(
                     table_id=block.table_id,
                     figure_id=block.figure_id,
                     figure_ref=block.figure_ref,
+                    footnotes=block.footnotes,
                 )
             )
             chunk_id += 1
@@ -727,7 +855,7 @@ def chunk_document_by_section(
 
         if not body_units:
             _start_new_section(block.page_start)
-        body_units.append([(token, block.page_end) for token in block_tokens])
+        body_units.append(([(token, block.page_end) for token in block_tokens], block.footnotes))
 
     _emit_toc_buffer()
     _flush_body_chunks()

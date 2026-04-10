@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,7 @@ class StoredChunk:
     figure_ref: str | None = None
     prev_chunk_id: int | None = None
     next_chunk_id: int | None = None
+    footnotes: tuple[dict[str, Any], ...] = ()
 
 
 class JsonlChunkStore:
@@ -69,6 +71,9 @@ class JsonlChunkStore:
                 section_path = payload.get("section_path")
                 if isinstance(section_path, list):
                     payload["section_path"] = tuple(section_path)
+                footnotes = payload.get("footnotes")
+                if isinstance(footnotes, list):
+                    payload["footnotes"] = tuple(footnotes)
                 if "page" in payload and "page_start" not in payload:
                     payload["page_start"] = payload.get("page")
                     payload["page_end"] = payload.get("page")

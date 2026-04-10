@@ -301,6 +301,48 @@ class BuildIndexTests(unittest.TestCase):
             self.assertEqual("5.7 Domestic Water Heaters (DWH)", dwh_tables[0]["section"])
             self.assertNotEqual("6.2 Determining the Scope of Work", dwh_tables[0]["section"])
 
+    def test_build_index_persists_resolved_footnotes_in_jsonl(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_dir = Path(temp_dir) / "input"
+            output_dir = Path(temp_dir) / "output"
+            input_dir.mkdir(parents=True)
+            (input_dir / "footnotes.txt").write_text(
+                "\n".join(
+                    [
+                        "## Page 1",
+                        "",
+                        "1.1 Definitions",
+                        "URL note applies here1 and code note applies here2 with explanation here3.",
+                        "1 https://example.org/spec",
+                        "2 24 CFR 92.251 and IRC Section R403.1",
+                        "3 Additional guidance is available from the Texas Historical Commission regarding historic properties and coordination procedures.",
+                        "",
+                        "10.5 Windows",
+                        "Window U-factor requirements are listed below.",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            build_index(input_dir=str(input_dir), output_dir=str(output_dir), embedding_dimension=16)
+            rows = [
+                json.loads(line)
+                for line in (output_dir / "chunk_store.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            body = next(row for row in rows if row["content_type"] == "body_text" and row["section"] == "1.1 Definitions")
+
+            self.assertIn("[Footnote 1: URL]", body["text"])
+            self.assertIn("[Footnote 2: code reference]", body["text"])
+            self.assertIn("[Footnote 3:", body["text"])
+            self.assertNotIn("1 https://example.org/spec", body["text"])
+            self.assertEqual(3, len(body["footnotes"]))
+            self.assertEqual({"url", "citation", "explanatory"}, {item["type"] for item in body["footnotes"]})
+            self.assertTrue(any(item["inline_label"].endswith("...") for item in body["footnotes"] if item["type"] == "explanatory"))
+
+            window_rows = [row for row in rows if row["section"] == "10.5 Windows" and row["content_type"] == "body_text"]
+            self.assertTrue(window_rows)
+
 
 if __name__ == "__main__":
     unittest.main()
