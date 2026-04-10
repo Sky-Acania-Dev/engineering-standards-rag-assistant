@@ -162,6 +162,42 @@ def analyze_page_layout(tokens: list[LayoutToken], *, page_height: float) -> Pag
     bodies = detect_footnote_bodies([tok for idx, tok in enumerate(tokens) if idx in footnote_token_indexes], page_height=page_height)
     body_indexes = tuple(idx for idx in range(len(tokens)) if idx not in footnote_token_indexes)
     anchors, rejected = detect_superscript_anchors(tokens, body_token_indexes=set(body_indexes))
+    body_ids = set(bodies)
+    if body_ids:
+        line_to_body_tokens: dict[int, list[int]] = {}
+        for idx in body_indexes:
+            line_to_body_tokens.setdefault(tokens[idx].line_id, []).append(idx)
+        for line_id, line_indexes in line_to_body_tokens.items():
+            sorted_indexes = sorted(line_indexes, key=lambda i: tokens[i].x0)
+            if not sorted_indexes:
+                continue
+            tail_idx = sorted_indexes[-1]
+            tail = tokens[tail_idx]
+            if not re.fullmatch(r"\d{1,2}", tail.text.strip()):
+                continue
+            note_id = int(tail.text)
+            if note_id not in body_ids:
+                continue
+            if tail.top >= page_height * 0.78:
+                continue
+            if len(sorted_indexes) < 2:
+                continue
+            prev = tokens[sorted_indexes[-2]]
+            if not re.fullmatch(r"[A-Za-z][A-Za-z\-]{3,}", prev.text.strip().strip(".,;:()[]")):
+                continue
+            gap = tail.x0 - prev.x1
+            if gap < 0 or gap > 6:
+                continue
+            if any(existing.token_index == tail_idx for existing in anchors):
+                continue
+            anchors.append(
+                AnchorCandidate(
+                    id=note_id,
+                    token_index=tail_idx,
+                    anchor_text=prev.text,
+                    confidence=0.55,
+                )
+            )
 
     return PageAnalysis(
         body_token_indexes=body_indexes,
