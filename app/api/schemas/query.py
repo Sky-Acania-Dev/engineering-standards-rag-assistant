@@ -19,7 +19,8 @@ class Citation:
     title: str
     section: str
     chunk_id: int
-    page: int | None
+    page_start: int | None
+    page_end: int | None
     score: float
 
 

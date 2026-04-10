@@ -35,6 +35,7 @@ class QueryServiceConfig:
     )
     min_chunks: int = 1
     retrieval_top_k: int = 5
+    excluded_content_types: set[str] = field(default_factory=lambda: {"image_artifact"})
     generation: GeneratorConfig = GeneratorConfig()
 
 
@@ -157,6 +158,7 @@ class QueryService:
             docstore=self._artifacts.docstore,
             query_vector=query_embedding[0],
             k=top_k,
+            excluded_content_types=self._config.excluded_content_types,
         )
         timings["retrieval_ms"] = self._elapsed_ms(retrieve_start)
 
@@ -305,7 +307,8 @@ class QueryService:
                 title=hit.chunk.title,
                 section=hit.chunk.section,
                 chunk_id=hit.chunk.chunk_id,
-                page=hit.chunk.page,
+                page_start=hit.chunk.page_start,
+                page_end=hit.chunk.page_end,
                 score=hit.score,
             )
             for hit in hits
@@ -366,7 +369,8 @@ class QueryService:
                         "title": hit.chunk.title,
                         "section": hit.chunk.section,
                         "chunk_id": hit.chunk.chunk_id,
-                        "page": hit.chunk.page,
+                        "page_start": hit.chunk.page_start,
+                        "page_end": hit.chunk.page_end,
                         "score": round(hit.score, 4),
                         "snippet": " ".join(hit.chunk.text.split())[:180],
                     }

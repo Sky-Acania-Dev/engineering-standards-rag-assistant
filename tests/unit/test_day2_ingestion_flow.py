@@ -47,10 +47,10 @@ class Day2IngestionFlowTests(unittest.TestCase):
         chunks = chunk_document_by_section(document, chunk_size=800, overlap=150)
 
         self.assertGreaterEqual(len(chunks), 4)
-        self.assertTrue(all(chunk.section in {"Chapter 1 Intro", "Section 2.0 Limits"} for chunk in chunks))
+        self.assertTrue(all(chunk.section in {"Chapter 1: Intro", "Section 2.0: Limits"} for chunk in chunks))
         self.assertTrue(all(chunk.token_count <= 800 for chunk in chunks))
 
-        chapter_chunks = [c for c in chunks if c.section == "Chapter 1 Intro"]
+        chapter_chunks = [c for c in chunks if c.section == "Chapter 1: Intro"]
         self.assertGreaterEqual(len(chapter_chunks), 2)
         first_tokens = chapter_chunks[0].text.split()
         second_tokens = chapter_chunks[1].text.split()
@@ -98,7 +98,8 @@ Body text here.
 
         caption_meta = [m for m in metadata if m.content_type == "figure_caption"]
         self.assertEqual(1, len(caption_meta))
-        self.assertEqual(3, caption_meta[0].page)
+        self.assertEqual(3, caption_meta[0].page_start)
+        self.assertEqual(3, caption_meta[0].page_end)
         self.assertEqual("Figure 1", caption_meta[0].figure_id)
         self.assertIsNotNone(caption_meta[0].figure_ref)
 
@@ -139,7 +140,8 @@ Body text here.
 
         self.assertEqual(1, len(results))
         self.assertGreaterEqual(len(results[0].chunks), 1)
-        self.assertTrue(any("[IMAGES]" in chunk.text for chunk in results[0].chunks))
+        artifacts = [chunk for chunk in results[0].chunks if chunk.content_type == "image_artifact"]
+        self.assertGreaterEqual(len(artifacts), 1)
 
     def test_ingestion_keeps_repeated_image_markers_across_pages(self) -> None:
         documents = [
@@ -165,7 +167,8 @@ Body text here.
 
         self.assertEqual(1, len(results))
         self.assertGreaterEqual(len(results[0].chunks), 1)
-        self.assertTrue(any("[IMAGES]" in chunk.text for chunk in results[0].chunks))
+        artifacts = [chunk for chunk in results[0].chunks if chunk.content_type == "image_artifact"]
+        self.assertGreaterEqual(len(artifacts), 1)
 
     def test_chunking_keeps_body_when_page_and_heading_share_block(self) -> None:
         document = "## Page 1\n# Inline Heading\nBody line one.\nBody line two."
@@ -175,7 +178,8 @@ Body text here.
         self.assertGreaterEqual(len(chunks), 1)
         body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
         self.assertGreaterEqual(len(body_chunks), 1)
-        self.assertEqual(1, body_chunks[0].page)
+        self.assertEqual(1, body_chunks[0].page_start)
+        self.assertEqual(1, body_chunks[0].page_end)
         self.assertIn("Body line one.", body_chunks[0].text)
         self.assertIn("Body line two.", body_chunks[0].text)
 
@@ -211,7 +215,8 @@ Note: Keep spacing.
 
         figure_chunks = [c for c in chunks if c.content_type == "figure_caption"]
         self.assertEqual(1, len(figure_chunks))
-        self.assertEqual(1, figure_chunks[0].page)
+        self.assertEqual(1, figure_chunks[0].page_start)
+        self.assertEqual(1, figure_chunks[0].page_end)
         self.assertEqual("Figure 2", figure_chunks[0].figure_id)
         self.assertIn("src=figs/diag-1.png", figure_chunks[0].figure_ref or "")
 
@@ -223,11 +228,320 @@ Note: Keep spacing.
 
         note_chunks = [c for c in chunks if c.content_type == "note"]
         self.assertEqual(1, len(note_chunks))
-        self.assertEqual(2, note_chunks[0].page)
+        self.assertEqual(2, note_chunks[0].page_start)
+        self.assertEqual(2, note_chunks[0].page_end)
 
         body_chunks = [c for c in chunks if c.content_type == "body_text"]
         self.assertTrue(any(c.section_path for c in body_chunks))
         self.assertTrue(any(c.prev_chunk_id is not None or c.next_chunk_id is not None for c in chunks))
+
+    def test_multi_page_toc_is_preserved_and_not_mixed_with_body(self) -> None:
+        document = """## Page 2
+
+Contents
+Chapter 1: Administration .................................................................. 5
+1.1 Definitions ............................................................................... 5
+
+## Page 3
+
+2.9 Landscaping for New Construction and Additions ............................. 13
+Chapter 3: Foundations .................................................................... 13
+
+## Page 5
+
+Chapter 1: Administration and General Requirements
+
+1.1 Definitions
+
+The capitalized terms used herein are defined below.
+"""
+        chunks = chunk_document_by_section(document, chunk_size=120, overlap=20)
+
+        toc_chunks = [chunk for chunk in chunks if chunk.content_type == "toc"]
+        self.assertEqual(1, len(toc_chunks))
+        self.assertIn("Contents", toc_chunks[0].text)
+        self.assertIn("2.9 Landscaping for New Construction and Additions", toc_chunks[0].text)
+        self.assertIn("Chapter 3: Foundations", toc_chunks[0].text)
+
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+        self.assertTrue(body_chunks)
+        self.assertTrue(all("Contents" not in chunk.text for chunk in body_chunks))
+        self.assertEqual(2, toc_chunks[0].page_start)
+        self.assertEqual(3, toc_chunks[0].page_end)
+
+    def test_toc_chunk_can_exceed_chunk_size_to_preserve_single_contiguous_toc(self) -> None:
+        toc_lines = "\n".join(
+            f"{i}.x Some TOC Entry ................................................................ {i + 10}"
+            for i in range(1, 40)
+        )
+        document = f"""## Page 2
+
+Contents
+{toc_lines}
+
+## Page 5
+
+Chapter 1: Intro
+
+1.1 Definitions
+
+Body starts here.
+"""
+        chunks = chunk_document_by_section(document, chunk_size=80, overlap=10)
+        toc_chunks = [chunk for chunk in chunks if chunk.content_type == "toc"]
+
+        self.assertEqual(1, len(toc_chunks))
+        self.assertGreater(toc_chunks[0].token_count, 80)
+
+    def test_chunking_deduplicates_repeated_cover_artifacts(self) -> None:
+        document = (
+            "## Page 1\n\nTexas Minimum Construction Standards [IMAGES] 1 embedded image(s)\n\n"
+            "## Page 2\n\nTexas Minimum Construction Standards [IMAGES] 1 embedded image(s)\n\n"
+            "## Page 3\n\nTexas Minimum Construction Standards [IMAGES] 1 embedded image(s)"
+        )
+
+        chunks = chunk_document_by_section(document, chunk_size=80, overlap=10)
+
+        artifacts = [chunk for chunk in chunks if chunk.content_type == "image_artifact"]
+        self.assertEqual(1, len(artifacts))
+
+    def test_chunking_reconstructs_hierarchical_decimal_headings(self) -> None:
+        document = """## Page 5
+
+Chapter 1: Administration and General Requirements
+
+1.1 Definitions
+
+Capitalized terms are defined by program rules.
+"""
+
+        chunks = chunk_document_by_section(document, chunk_size=120, overlap=20)
+
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+        self.assertGreaterEqual(len(body_chunks), 1)
+        self.assertIn("Chapter 1: Administration and General Requirements", body_chunks[0].section_path)
+        self.assertIn("1.1 Definitions", body_chunks[0].section_path)
+        self.assertIn("Chapter 1: Administration and General Requirements", body_chunks[0].text)
+        self.assertIn("1.1 Definitions", body_chunks[0].text)
+
+    def test_page_start_recomputes_across_pages_when_chunks_slide(self) -> None:
+        page1 = " ".join(f"p1_{i}" for i in range(12))
+        page2 = " ".join(f"p2_{i}" for i in range(12))
+        document = f"""## Page 1
+
+Chapter 1 Intro
+
+{page1}
+
+## Page 2
+
+{page2}
+"""
+
+        chunks = chunk_document_by_section(document, chunk_size=10, overlap=4)
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+
+        self.assertGreaterEqual(len(body_chunks), 3)
+        self.assertEqual(1, body_chunks[0].page_start)
+        self.assertEqual(2, body_chunks[-1].page_end)
+        self.assertTrue(any(chunk.page_start == 2 for chunk in body_chunks[1:]))
+
+    def test_section_metadata_changes_after_heading_change(self) -> None:
+        document = """## Page 1
+
+Chapter 1 First
+
+alpha beta gamma delta epsilon zeta eta theta iota kappa
+
+Chapter 2 Second
+
+lambda mu nu xi omicron pi rho sigma tau upsilon
+"""
+
+        chunks = chunk_document_by_section(document, chunk_size=8, overlap=2)
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+
+        self.assertTrue(any(chunk.section == "Chapter 1: First" for chunk in body_chunks))
+        self.assertTrue(any(chunk.section == "Chapter 2: Second" for chunk in body_chunks))
+        self.assertTrue(any("Chapter 2: Second" in chunk.section_path for chunk in body_chunks))
+        chapter1_chunks = [chunk for chunk in body_chunks if chunk.section == "Chapter 1: First"]
+        chapter2_chunks = [chunk for chunk in body_chunks if chunk.section == "Chapter 2: Second"]
+        self.assertTrue(chapter1_chunks)
+        self.assertTrue(chapter2_chunks)
+        self.assertTrue(all("Chapter 2" not in chunk.text for chunk in chapter1_chunks))
+
+    def test_new_chapter_heading_forces_chunk_boundary(self) -> None:
+        document = """## Page 1
+
+Chapter 1: Alpha
+
+one two three four five six seven eight nine ten
+
+Chapter 2: Beta
+
+eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty
+"""
+        chunks = chunk_document_by_section(document, chunk_size=9, overlap=3)
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+        chapter1_chunks = [chunk for chunk in body_chunks if chunk.section == "Chapter 1: Alpha"]
+        chapter2_chunks = [chunk for chunk in body_chunks if chunk.section == "Chapter 2: Beta"]
+
+        self.assertTrue(chapter1_chunks)
+        self.assertTrue(chapter2_chunks)
+        self.assertTrue(all("Chapter 2: Beta" not in chunk.text for chunk in chapter1_chunks))
+        self.assertTrue(all("Chapter 1: Alpha" not in chunk.text for chunk in chapter2_chunks))
+
+    def test_malformed_heading_text_is_normalized(self) -> None:
+        document = """## Page 1
+
+5.4 Water Supply5
+
+All fixtures must be pressure tested.
+"""
+        chunks = chunk_document_by_section(document, chunk_size=60, overlap=10)
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+
+        self.assertTrue(body_chunks)
+        self.assertEqual("5.4 Water Supply", body_chunks[0].section)
+        self.assertIn("5.4 Water Supply", body_chunks[0].section_path)
+
+    def test_footnote_contaminated_heading_is_normalized(self) -> None:
+        document = """## Page 13
+
+Chapter 3: Foundations9
+
+3.1 General Requirements
+
+Foundation requirements begin here.
+"""
+        chunks = chunk_document_by_section(document, chunk_size=80, overlap=10)
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+
+        self.assertTrue(body_chunks)
+        self.assertEqual("3.1 General Requirements", body_chunks[0].section)
+        self.assertIn("Chapter 3: Foundations", body_chunks[0].section_path)
+        self.assertNotIn("Foundations9", body_chunks[0].text)
+
+    def test_overlap_preserved_without_cross_section_metadata_leak(self) -> None:
+        sec1 = " ".join(f"s1_{i}" for i in range(16))
+        sec2 = " ".join(f"s2_{i}" for i in range(16))
+        document = f"""## Page 1
+
+Chapter 1 First
+
+{sec1}
+
+## Page 2
+
+Chapter 2 Second
+
+{sec2}
+"""
+
+        chunks = chunk_document_by_section(document, chunk_size=10, overlap=4)
+        sec1_chunks = [chunk for chunk in chunks if chunk.section == "Chapter 1: First" and chunk.content_type == "body_text"]
+        sec2_chunks = [chunk for chunk in chunks if chunk.section == "Chapter 2: Second" and chunk.content_type == "body_text"]
+
+        self.assertGreaterEqual(len(sec1_chunks), 2)
+        self.assertGreaterEqual(len(sec2_chunks), 2)
+        self.assertEqual(sec1_chunks[0].text.split()[-4:], sec1_chunks[1].text.split()[:4])
+        self.assertEqual(sec2_chunks[0].text.split()[-4:], sec2_chunks[1].text.split()[:4])
+        self.assertTrue(all(not token.startswith("s1_") for token in sec2_chunks[0].text.split()))
+
+    def test_image_marker_with_running_text_is_not_misclassified_as_artifact(self) -> None:
+        document = """## Page 1
+
+Chapter 1 Intro
+
+This paragraph has substantial running text and ends with [IMAGES] 2 embedded image(s)
+but it should still be handled as body text.
+"""
+
+        chunks = chunk_document_by_section(document, chunk_size=80, overlap=10)
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+        artifact_chunks = [chunk for chunk in chunks if chunk.content_type == "image_artifact"]
+
+        self.assertGreaterEqual(len(body_chunks), 1)
+        self.assertEqual([], artifact_chunks)
+
+    def test_large_single_section_splits_by_paragraph_before_token_fallback(self) -> None:
+        paragraph1 = " ".join(f"p1_{i}" for i in range(320))
+        paragraph2 = " ".join(f"p2_{i}" for i in range(320))
+        paragraph3 = " ".join(f"p3_{i}" for i in range(320))
+        document = f"""## Page 8
+
+Chapter 6: Heating, Ventilation, and Air Conditioning Systems (HVAC)
+
+6.1 General Requirements
+
+{paragraph1}
+
+{paragraph2}
+
+{paragraph3}
+"""
+        chunks = chunk_document_by_section(document, chunk_size=700, overlap=50)
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+
+        self.assertGreaterEqual(len(body_chunks), 2)
+        self.assertTrue(any("p1_0" in chunk.text and "p2_0" in chunk.text for chunk in body_chunks))
+        self.assertTrue(any("p3_0" in chunk.text for chunk in body_chunks))
+        # Section metadata must remain stable for child chunks of the same large section.
+        self.assertTrue(all(chunk.section == "6.1 General Requirements" for chunk in body_chunks))
+
+    def test_soft_chunk_policy_prefers_paragraph_boundary(self) -> None:
+        paragraph1 = " ".join(f"a{i}" for i in range(360))
+        paragraph2 = " ".join(f"b{i}" for i in range(360))
+        paragraph3 = " ".join(f"c{i}" for i in range(360))
+        document = f"""## Page 10
+
+Chapter 7: Roofing Systems and Attics
+
+7.1 General Requirements
+
+{paragraph1}
+
+{paragraph2}
+
+{paragraph3}
+"""
+        chunks = chunk_document_by_section(document, chunk_size=700, overlap=50)
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+
+        self.assertGreaterEqual(len(body_chunks), 2)
+        # Soft split should happen at paragraph boundary after first two paragraphs.
+        self.assertTrue(any("a0" in chunk.text and "b359" in chunk.text for chunk in body_chunks))
+        self.assertTrue(any("c0" in chunk.text for chunk in body_chunks))
+        self.assertTrue(all(chunk.token_count <= 875 for chunk in body_chunks))
+
+    def test_soft_and_hard_split_ratios_are_configurable(self) -> None:
+        paragraph1 = " ".join(f"m{i}" for i in range(60))
+        paragraph2 = " ".join(f"n{i}" for i in range(60))
+        paragraph3 = " ".join(f"o{i}" for i in range(60))
+        document = f"""## Page 2
+
+Chapter 2: Site Work
+
+2.1 General Requirements
+
+{paragraph1}
+
+{paragraph2}
+
+{paragraph3}
+"""
+        chunks = chunk_document_by_section(
+            document,
+            chunk_size=100,
+            overlap=20,
+            soft_split_ratio=0.6,
+            hard_split_ratio=1.1,
+        )
+        body_chunks = [chunk for chunk in chunks if chunk.content_type == "body_text"]
+
+        self.assertGreaterEqual(len(body_chunks), 2)
+        # hard split ratio at 1.1 should cap growth before 110 tokens
+        self.assertTrue(all(chunk.token_count <= 110 for chunk in body_chunks))
 
 
 if __name__ == "__main__":
