@@ -4,6 +4,8 @@ from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
 
+from app.rag.chunking import FootnoteMeta
+
 
 @dataclass(frozen=True)
 class StoredChunk:
@@ -22,6 +24,7 @@ class StoredChunk:
     figure_ref: str | None = None
     prev_chunk_id: int | None = None
     next_chunk_id: int | None = None
+    footnotes: tuple[FootnoteMeta, ...] = ()
 
 
 class JsonlChunkStore:
@@ -73,6 +76,9 @@ class JsonlChunkStore:
                     payload["page_start"] = payload.get("page")
                     payload["page_end"] = payload.get("page")
                     payload.pop("page", None)
+                raw_footnotes = payload.get("footnotes")
+                if isinstance(raw_footnotes, list):
+                    payload["footnotes"] = tuple(FootnoteMeta(**note) for note in raw_footnotes)
                 store.upsert_many([StoredChunk(**payload)])
 
         return store

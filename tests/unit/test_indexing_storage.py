@@ -9,6 +9,7 @@ from app.stores.docstore import JsonlChunkStore, StoredChunk
 from app.stores.faiss_store import FaissStore
 from scripts.build_index import build_index
 from app.ingestion.normalize import normalize_ingested_text
+from app.rag.chunking import FootnoteMeta
 
 
 class FaissStoreTests(unittest.TestCase):
@@ -63,6 +64,35 @@ class DocStoreTests(unittest.TestCase):
             self.assertIsNotNone(record)
             assert record is not None
             self.assertEqual("alpha", record.text)
+
+
+    def test_save_and_load_roundtrip_with_footnotes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store_path = Path(temp_dir) / "chunk_store.jsonl"
+            store = JsonlChunkStore()
+            store.upsert_many(
+                [
+                    StoredChunk(
+                        chunk_uid="doc-1:1",
+                        text="Rule[fn:3] applies",
+                        doc_id="doc-1",
+                        title="Doc 1",
+                        section="Section 1",
+                        chunk_id=1,
+                        footnotes=(
+                            FootnoteMeta(id="3", content="linked note", anchor_text="Rule", page=1),
+                        ),
+                    )
+                ]
+            )
+            store.save(store_path)
+
+            restored = JsonlChunkStore.load(store_path)
+            record = restored.get("doc-1:1")
+            self.assertIsNotNone(record)
+            assert record is not None
+            self.assertTrue(record.footnotes)
+            self.assertEqual("3", record.footnotes[0].id)
 
     def test_save_orders_by_numeric_chunk_id_not_uid_lexicographic(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

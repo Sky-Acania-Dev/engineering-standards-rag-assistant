@@ -82,6 +82,72 @@ class FootnotePipelineTests(unittest.TestCase):
         self.assertNotIn("102", " ".join(page.lines))
 
 
+
+    def test_no_dangling_marker_when_definition_missing(self) -> None:
+        text = "## Page 1\nRule[fn:7] applies"
+        chunks = chunk_document_by_section(text)
+        merged = "\n".join(c.text for c in chunks)
+        self.assertNotIn("[fn:7]", merged)
+
+    def test_debug_lines_never_leak_into_chunks(self) -> None:
+        text = "## Page 1\n[DEBUG] line_count=5\nRule text"
+        chunks = chunk_document_by_section(text)
+        self.assertTrue(all("[DEBUG]" not in c.text for c in chunks))
+
+    def test_marker_implies_metadata_consistency(self) -> None:
+        text = "## Page 1\nRule[fn:3] applies\n[FNDEF page=1 id=3 anchor=Rule] linked note"
+        chunks = chunk_document_by_section(text)
+        body = [c for c in chunks if c.content_type == "body_text"]
+        self.assertTrue(any("[fn:3]" in c.text for c in body))
+        self.assertTrue(any(any(note.id == "3" for note in c.footnotes) for c in body))
+
+    def test_preserve_citation_drop_unresolved_anchor_fragment(self) -> None:
+        body = self._chars_for_text("§2306.51", y_top=40.0, size=10.0, order_start=0)
+        sup = self._chars_for_text("4", y_top=37.0, size=7.0, x_start=body[-1].x1 + 0.4, order_start=100)
+        lines = build_visual_lines(body + sup)
+        anchors = detect_superscript_anchors(lines)
+        page = reconstruct_page_text(lines, resolved=[], unresolved=anchors, footnote_line_indexes=set())
+        text = " ".join(page.lines)
+        self.assertIn("§2306.51", text)
+        self.assertNotIn("§2306.514", text)
+
+    def test_no_unresolved_http_number_fragment_leakage(self) -> None:
+        class _FakePage:
+            images = []
+            height = 300.0
+
+            def __init__(self) -> None:
+                helper = FootnotePipelineTests()
+                self.chars = []
+                self.chars.extend(helper._chars_for_text("Main paragraph body.", y_top=80.0, size=10.0, order_start=0))
+                self.chars.extend(helper._chars_for_text("10 http://example.org/ref", y_top=190.0, size=10.0, order_start=200))
+
+            def extract_text(self) -> str:
+                return ""
+
+            def extract_tables(self):
+                return []
+
+        class _FakeDoc:
+            pages = [_FakePage()]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return None
+
+        class _FakePdfPlumber:
+            @staticmethod
+            def open(_: str):
+                return _FakeDoc()
+
+        with patch("app.ingestion.parsers.pdf._require_pdfplumber", return_value=_FakePdfPlumber):
+            parsed = parse_pdf_file("dummy.pdf")
+        chunks = chunk_document_by_section(parsed)
+        merged = "\n".join(c.text for c in chunks if c.content_type == "body_text")
+        self.assertNotIn("10 http", merged)
+
     def test_realistic_same_size_footer_removed_and_metadata_attached(self) -> None:
         class _FakePage:
             images = []

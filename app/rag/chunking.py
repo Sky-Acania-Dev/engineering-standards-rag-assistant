@@ -535,7 +535,10 @@ def _extract_embedded_footnote_defs(document_text: str) -> tuple[str, dict[tuple
     kept_lines: list[str] = []
     pattern = re.compile(r"^\[FNDEF\s+page=(?P<page>\d+)\s+id=(?P<id>\d{1,3})\s+anchor=(?P<anchor>[^\]]*)\]\s*(?P<content>.*)$")
     for line in document_text.splitlines():
-        match = pattern.match(line.strip())
+        stripped = line.strip()
+        if stripped.startswith("[DEBUG]"):
+            continue
+        match = pattern.match(stripped)
         if not match:
             kept_lines.append(line)
             continue
@@ -556,10 +559,12 @@ def _attach_chunk_footnotes(chunks: list[TextChunk], footnotes: dict[tuple[int |
     for chunk in chunks:
         ids = marker_pattern.findall(chunk.text)
         if not ids:
-            result.append(chunk)
+            result.append(replace(chunk, text=chunk.text.replace("[DEBUG]", "").strip()))
             continue
+
         unique: list[FootnoteMeta] = []
         seen: set[tuple[str, str]] = set()
+        matched_ids: set[str] = set()
         for note_id in ids:
             page_span = [p for p in (chunk.page_start, chunk.page_end) if p is not None]
             candidates: list[FootnoteMeta] = []
@@ -568,20 +573,40 @@ def _attach_chunk_footnotes(chunks: list[TextChunk], footnotes: dict[tuple[int |
                     note = footnotes.get((page, note_id))
                     if note is not None:
                         candidates.append(note)
-            else:
-                for (page, key_id), note in footnotes.items():
-                    if key_id == note_id and page is None:
-                        candidates.append(note)
+            if not candidates:
+                candidates = [note for (page, key_id), note in footnotes.items() if key_id == note_id]
             if not candidates:
                 continue
             note = candidates[0]
+            matched_ids.add(note_id)
             dedupe_key = (note.id, note.content)
             if dedupe_key in seen:
                 continue
             seen.add(dedupe_key)
             unique.append(note)
-        result.append(replace(chunk, footnotes=tuple(unique)))
+
+        text = chunk.text
+        for marker_id in set(ids) - matched_ids:
+            text = re.sub(rf"\s*\[fn:{re.escape(marker_id)}\]", "", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        result.append(replace(chunk, text=text, footnotes=tuple(unique)))
     return result
+
+
+def _enforce_chunk_footnote_invariants(chunks: list[TextChunk]) -> list[TextChunk]:
+    marker_pattern = re.compile(r"\[fn:(\d{1,3})\]")
+    cleaned: list[TextChunk] = []
+    for chunk in chunks:
+        text = chunk.text.replace("[DEBUG]", "")
+        marker_ids = marker_pattern.findall(text)
+        note_ids = {note.id for note in chunk.footnotes}
+        dangling = set(marker_ids) - note_ids
+        if dangling:
+            for note_id in dangling:
+                text = re.sub(rf"\s*\[fn:{re.escape(note_id)}\]", "", text)
+            text = re.sub(r"\s+", " ", text).strip()
+        cleaned.append(replace(chunk, text=text))
+    return cleaned
 
 def chunk_document_by_section(
     document_text: str,
@@ -799,7 +824,8 @@ def chunk_document_by_section(
     _flush_body_chunks()
 
     deduped = _deduplicate_chunks(chunks)
-    return _attach_chunk_footnotes(deduped, embedded_footnotes)
+    with_footnotes = _attach_chunk_footnotes(deduped, embedded_footnotes)
+    return _enforce_chunk_footnote_invariants(with_footnotes)
 
 
 def chunks_to_text(chunks: Iterable[TextChunk]) -> list[str]:

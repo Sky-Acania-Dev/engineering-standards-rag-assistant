@@ -89,6 +89,7 @@ def build_index(
                     figure_ref=metadata.figure_ref,
                     prev_chunk_id=metadata.prev_chunk_id,
                     next_chunk_id=metadata.next_chunk_id,
+                    footnotes=metadata.footnotes,
                 )
             )
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import logging
 import os
 
 from app.ingestion.parsers.char_superscript_detector import detect_superscript_anchors
@@ -9,6 +10,9 @@ from app.ingestion.parsers.footnote_linker import link_anchors_to_bodies
 from app.ingestion.parsers.footnote_region_detector import detect_footnote_bodies
 from app.ingestion.parsers.pdfplumber_layout import build_visual_lines, extract_page_chars
 from app.ingestion.parsers.text_reconstructor import reconstruct_page_text
+
+
+logger = logging.getLogger(__name__)
 
 
 def _require_pdfplumber() -> Any:
@@ -102,10 +106,14 @@ def _extract_structured_page_text_pdfplumber(page: Any, page_number: int) -> str
         page_text_lines = reconstructed.lines
 
         if os.getenv("PDF_FOOTNOTE_DEBUG", "").lower() in {"1", "true", "yes"}:
-            lines.append("[DEBUG] line_count=" + str(len(visual_lines)))
-            lines.append("[DEBUG] anchors=" + str(len(anchors)))
-            lines.append("[DEBUG] resolved=" + str(len(resolved_for_page)))
-            lines.append("[DEBUG] dropped_unresolved=" + str(len(unresolved)))
+            logger.debug(
+                "pdf footnote debug page=%s line_count=%s anchors=%s resolved=%s dropped_unresolved=%s",
+                page_number,
+                len(visual_lines),
+                len(anchors),
+                len(resolved_for_page),
+                len(unresolved),
+            )
     else:
         page_text = (page.extract_text() or "").strip()
         if page_text:
