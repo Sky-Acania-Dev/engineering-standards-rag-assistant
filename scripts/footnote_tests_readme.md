@@ -41,7 +41,7 @@ If you omit `--out`, output defaults to:
 To inspect why chapter-title markers (`1` and `9`) are accepted/rejected:
 
 ```powershell
-python .\scripts\footnote_title_anchor_debug.py $pdfPath
+py .\scripts\footnote_title_anchor_debug.py $pdfPath
 ```
 
 This script prints, for the title-line digit candidates:
