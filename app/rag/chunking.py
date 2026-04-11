@@ -576,6 +576,16 @@ def _extract_embedded_footnote_defs(document_text: str) -> tuple[str, dict[tuple
     return "\n".join(kept_lines), linked, unlinked
 
 
+
+
+def _clean_orphan_footnote_artifacts(text: str) -> str:
+    # Remove leaked unlinked footnote url lines such as "1 0 http://..." or "8 http://..."
+    text = re.sub(r"(?:^|\s)(?:step\s+)?\d(?:\s+\d){0,2}\s+https?://\S+", " ", text, flags=re.IGNORECASE)
+    # Remove trailing orphan numeric labels at chunk/line boundaries.
+    text = re.sub(r"\s+\d(?:\s+\d){0,2}$", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
 def _attach_chunk_footnotes(
     chunks: list[TextChunk],
     linked_footnotes: dict[tuple[int | None, str], FootnoteMeta],
@@ -626,7 +636,7 @@ def _attach_chunk_footnotes(
         for marker_id in set(ids) - matched_ids:
             text = re.sub(rf"\s*\[(?:fn:\s*|footnote:\s*){re.escape(marker_id)}\]", "", text)
         text = text.replace("[DEBUG]", "")
-        text = re.sub(r"\s+", " ", text).strip()
+        text = _clean_orphan_footnote_artifacts(text)
         result.append(replace(chunk, text=text, footnotes=tuple(unique)))
     return result
 
@@ -643,6 +653,7 @@ def _enforce_chunk_footnote_invariants(chunks: list[TextChunk]) -> list[TextChun
             for note_id in dangling:
                 text = re.sub(rf"\s*\[(?:fn:\s*|footnote:\s*){re.escape(note_id)}\]", "", text)
             text = re.sub(r"\s+", " ", text).strip()
+        text = _clean_orphan_footnote_artifacts(text)
         cleaned.append(replace(chunk, text=text))
     return cleaned
 

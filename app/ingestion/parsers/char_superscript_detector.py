@@ -36,10 +36,14 @@ def detect_superscript_anchors(lines: list[LineInfo]) -> list[AnchorCandidate]:
             j = idx + 1
             while j < len(chars):
                 nxt = chars[j]
+                gap = nxt.x0 - run[-1].x1
+                if nxt.text.isspace() and gap <= max(3.5, line.body_size * 0.5):
+                    j += 1
+                    continue
                 if (
                     nxt.text.isdigit()
-                    and nxt.x0 - run[-1].x1 <= max(1.8, line.body_size * 0.25)
-                    and abs(nxt.bottom - run[-1].bottom) <= max(1.2, line.body_size * 0.25)
+                    and gap <= max(2.6, line.body_size * 0.4)
+                    and abs(nxt.bottom - run[-1].bottom) <= max(1.4, line.body_size * 0.3)
                 ):
                     run.append(nxt)
                     j += 1
@@ -58,14 +62,15 @@ def detect_superscript_anchors(lines: list[LineInfo]) -> list[AnchorCandidate]:
             prev_gap = ch.x0 - prev_char.x1 if prev_char else 99.0
             next_gap = next_char.x0 - run[-1].x1 if next_char else 99.0
 
-            is_small = run_size <= line.body_size * 0.92
-            is_raised = run_bottom <= line.baseline - max(0.3, line.body_size * 0.08)
+            is_small = run_size <= line.body_size * 0.97
+            is_raised = run_bottom <= line.baseline - max(0.15, line.body_size * 0.03)
             attached_left = prev_char is not None and prev_gap <= max(2.8, line.body_size * 0.35)
             line_final = next_char is None
             punctuation_adjacent = prev_char is not None and prev_char.text in _PUNCT
             separated_right = line_final or next_gap >= -max(0.8, line.body_size * 0.15)
 
-            if is_small and is_raised and attached_left and separated_right:
+            heading_like = len("".join(c.text for c in chars).split()) <= 12
+            if is_small and (is_raised or heading_like) and attached_left and separated_right:
                 left = min(c.x0 for c in run)
                 top = min(c.top for c in run)
                 right = max(c.x1 for c in run)

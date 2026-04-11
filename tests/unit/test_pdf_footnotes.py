@@ -40,6 +40,36 @@ class FootnotePipelineTests(unittest.TestCase):
         bodies, _ = detect_footnote_bodies(lines, page_height=300.0)
         self.assertEqual([], bodies)
 
+
+    def test_heading_title_anchor_detected(self) -> None:
+        title = self._chars_for_text("Chapter 1: Intro", y_top=30.0, size=12.0, order_start=0)
+        sup = self._chars_for_text("1", y_top=27.5, size=9.5, x_start=title[-1].x1 + 0.3, order_start=100)
+        bodies = self._chars_for_text("1 heading footnote", y_top=220.0, size=8.0, order_start=200)
+        lines = build_visual_lines(title + sup + bodies)
+        anchors = detect_superscript_anchors(lines)
+        foot_bodies, idx = detect_footnote_bodies(lines, page_height=300.0)
+        resolved, unresolved, _ = link_anchors_to_bodies(anchors, foot_bodies)
+        page = reconstruct_page_text(lines, resolved=resolved, unresolved=unresolved, footnote_line_indexes=idx)
+        self.assertIn("[footnote: 1]", "\n".join(page.lines))
+
+    def test_two_digit_label_grouping(self) -> None:
+        labels = ["10", "11", "14", "19", "22", "23"]
+        chars = []
+        order = 0
+        for idx, label in enumerate(labels):
+            y = 220.0 + idx * 10.0
+            chars.extend(self._chars_for_text(f"{label} http://example.com/{label}", y_top=y, size=8.0, order_start=order))
+            order += 80
+        lines = build_visual_lines(chars)
+        bodies, _ = detect_footnote_bodies(lines, page_height=300.0)
+        self.assertEqual(labels, [b.label for b in bodies])
+
+    def test_orphan_end_of_chunk_cleanup(self) -> None:
+        text = "## Page 1\nBody text [footnote: 2] 1 2"
+        chunks = chunk_document_by_section(text)
+        merged = "\n".join(c.text for c in chunks)
+        self.assertNotIn(" 1 2", merged)
+
     def test_period_comma_and_citation_preservation(self) -> None:
         chars = []
         l1 = self._chars_for_text("40 CFR Part 745.", y_top=30.0, size=10.0, order_start=0)
