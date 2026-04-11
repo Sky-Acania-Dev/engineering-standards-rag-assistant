@@ -5,7 +5,12 @@ from pathlib import Path
 from statistics import median
 from typing import Any
 
-from app.ingestion.parsers.pdf import _group_page_chars_into_lines, _line_text, _require_pdfplumber
+from app.ingestion.parsers.pdf import (
+    _group_page_chars_into_lines,
+    _line_text,
+    _require_pdfplumber,
+    _superscript_geometry,
+)
 
 
 TARGET_TITLES = (
@@ -37,8 +42,13 @@ def _print_candidate(
     char_text = str(ch.get("text", ""))
     char_size = float(ch.get("size", line_size_median) or line_size_median)
     char_top = float(ch.get("doctop", ch.get("top", line_top_median)))
-    is_smaller = char_size <= (line_size_median * 0.84)
-    is_raised = char_top < (line_top_median - 1.2)
+    is_smaller, is_raised = _superscript_geometry(
+        char_size=char_size,
+        char_top=char_top,
+        line_size_median=line_size_median,
+        line_top_median=line_top_median,
+    )
+    top_delta = line_top_median - char_top
 
     prefix_chars = line_chars[max(0, char_index - 25) : char_index]
     prefix_text = _line_text(prefix_chars)
@@ -57,7 +67,7 @@ def _print_candidate(
     print(f"line_size_median={line_size_median:.3f} line_top_median={line_top_median:.3f}")
     print(
         f"digit_size={char_size:.3f} digit_top={char_top:.3f} "
-        f"is_smaller={is_smaller} is_raised={is_raised}"
+        f"top_delta={top_delta:.3f} is_smaller={is_smaller} is_raised={is_raised}"
     )
     print(f"prefix_text={prefix_text!r}")
     print("prefix_chars:")

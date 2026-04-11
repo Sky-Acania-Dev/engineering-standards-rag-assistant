@@ -120,6 +120,22 @@ def _line_text(line_chars: list[dict[str, Any]]) -> str:
     return "".join(str(ch.get("text", "")) for ch in line_chars)
 
 
+def _superscript_geometry(
+    *,
+    char_size: float,
+    char_top: float,
+    line_size_median: float,
+    line_top_median: float,
+) -> tuple[bool, bool]:
+    is_smaller = char_size <= (line_size_median * 0.84)
+    top_delta = line_top_median - char_top
+    # Some PDFs encode superscripts with smaller size but near-equal (or slightly
+    # lower) `top` values due to glyph metrics. Allow a tight near-baseline window
+    # when the size reduction is strong.
+    is_raised = top_delta >= 0.35 or (is_smaller and abs(top_delta) <= 0.55)
+    return is_smaller, is_raised
+
+
 def _build_anchor_debug_for_page(page: Any, page_number: int) -> dict[str, Any]:
     chars = list(getattr(page, "chars", []) or [])
     lines = _group_page_chars_into_lines(chars)
@@ -159,8 +175,14 @@ def _build_anchor_debug_for_page(page: Any, page_number: int) -> dict[str, Any]:
             if len(run_chars) > 2:
                 superscript_like = [
                     (
-                        float(dch.get("size", line_size_median) or line_size_median) <= (line_size_median * 0.90)
-                        and float(dch.get("doctop", dch.get("top", line_top_median))) < (line_top_median - 0.6)
+                        lambda geom: geom[0] and geom[1]
+                    )(
+                        _superscript_geometry(
+                            char_size=float(dch.get("size", line_size_median) or line_size_median),
+                            char_top=float(dch.get("doctop", dch.get("top", line_top_median))),
+                            line_size_median=line_size_median,
+                            line_top_median=line_top_median,
+                        )
                     )
                     for dch in run_chars
                 ]
@@ -181,8 +203,12 @@ def _build_anchor_debug_for_page(page: Any, page_number: int) -> dict[str, Any]:
 
             anchor_size_median = median(float(ac.get("size", line_size_median) or line_size_median) for ac in anchor_chars)
             anchor_top_median = median(float(ac.get("doctop", ac.get("top", line_top_median))) for ac in anchor_chars)
-            is_smaller = anchor_size_median <= (line_size_median * 0.84)
-            is_raised = anchor_top_median < (line_top_median - 1.2)
+            is_smaller, is_raised = _superscript_geometry(
+                char_size=anchor_size_median,
+                char_top=anchor_top_median,
+                line_size_median=line_size_median,
+                line_top_median=line_top_median,
+            )
             if not (is_smaller and is_raised):
                 idx = j
                 continue

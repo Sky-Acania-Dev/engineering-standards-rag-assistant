@@ -145,6 +145,40 @@ class PDFParserTests(unittest.TestCase):
         ids = [entry["anchor_id"] for entry in debug["detected_anchors"]]
         self.assertIn("19", ids)
 
+    def test_phase1_accepts_title_superscript_with_near_baseline_top(self) -> None:
+        class _FakePage:
+            def __init__(self, chars: list[dict[str, object]]) -> None:
+                self.chars = chars
+
+        chars = [
+            {"text": "C", "x0": 10, "x1": 14, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "h", "x0": 14, "x1": 18, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "a", "x0": 18, "x1": 22, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "p", "x0": 22, "x1": 26, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "t", "x0": 26, "x1": 30, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "e", "x0": 30, "x1": 34, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "r", "x0": 34, "x1": 38, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": " ", "x0": 38, "x1": 40, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "3", "x0": 40, "x1": 44, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": ":", "x0": 44, "x1": 46, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": " ", "x0": 46, "x1": 48, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "F", "x0": 48, "x1": 52, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "o", "x0": 52, "x1": 56, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "u", "x0": 56, "x1": 60, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "n", "x0": 60, "x1": 64, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "d", "x0": 64, "x1": 68, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "a", "x0": 68, "x1": 72, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "t", "x0": 72, "x1": 76, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "i", "x0": 76, "x1": 80, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "o", "x0": 80, "x1": 84, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "n", "x0": 84, "x1": 88, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "s", "x0": 88, "x1": 92, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "9", "x0": 93, "x1": 95, "top": 100.44, "bottom": 106.44, "doctop": 100.44, "size": 9},
+        ]
+        debug = _build_anchor_debug_for_page(_FakePage(chars), page_number=13)
+        ids = [entry["anchor_id"] for entry in debug["detected_anchors"]]
+        self.assertIn("9", ids)
+
     def test_parse_pdf_file_uses_pdfplumber_primary_extraction(self) -> None:
         class _FakePage:
             images = []
