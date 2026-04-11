@@ -1,10 +1,11 @@
-# Phase 1 Footnote Anchor Debug — Quick Test Guide
+# Footnote Debug — Phase 1 + Phase 2 Quick Test Guide
 
-This guide explains how to run the Phase 1 superscript-anchor debug extractor and inspect output.
+This guide explains how to run Phase 1 superscript-anchor debug extraction and Phase 2 page-bottom region classification.
 
 ## Script
 
 - `scripts/footnote_phase1_debug.py`
+- `scripts/footnote_phase2_debug.py`
 - `scripts/footnote_title_anchor_debug.py` (targeted title-marker diagnostics for `...Requirements1` and `...Foundations9`)
 
 The script reads a PDF and writes page-level JSON debug output using:
@@ -83,3 +84,32 @@ Phase 1 does **not**:
 - classify page-bottom regions,
 - strip or rewrite body text,
 - emit chunk-level footnote metadata.
+
+## Phase 2 run command
+
+```powershell
+Set-Location "C:\Personal Folder\Work\WorkRepo\engineering-standards-rag-assistant"
+$env:PYTHONPATH = "."
+
+$pdfPath = "C:\Personal Folder\Work\WorkRepo\engineering-standards-rag-assistant\temp\my_pdfs\14-TMCS.pdf"
+$outPath = "C:\Personal Folder\Work\WorkRepo\engineering-standards-rag-assistant\temp\footnote_tests\phase2_bottom_regions.json"
+
+py .\scripts\footnote_phase2_debug.py $pdfPath --out $outPath
+```
+
+Phase 2 output is page-level JSON with:
+
+- `page`
+- `region_bbox`
+- `classification` (`true_footnote_block`, `ordinary_numbered_list`, `table_region`, `unknown`)
+- `reasons_for_classification`
+- `parsed_body_labels` (only when `true_footnote_block`)
+- `parsed_bodies` (only when `true_footnote_block`)
+
+## Phase 2 scope boundary
+
+Phase 2 does **not**:
+
+- link anchors to bodies,
+- rewrite or strip source body text,
+- emit chunk footnote metadata.

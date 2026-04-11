@@ -6,7 +6,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.ingestion.parsers.html import ingest_html_folder, parse_html_content
-from app.ingestion.parsers.pdf import _build_anchor_debug_for_page, parse_pdf_file
+from app.ingestion.parsers.pdf import (
+    _build_anchor_debug_for_page,
+    _build_phase2_bottom_region_debug_for_page,
+    parse_pdf_file,
+)
 
 
 class HTMLParserTests(unittest.TestCase):
@@ -178,6 +182,93 @@ class PDFParserTests(unittest.TestCase):
         debug = _build_anchor_debug_for_page(_FakePage(chars), page_number=13)
         ids = [entry["anchor_id"] for entry in debug["detected_anchors"]]
         self.assertIn("9", ids)
+
+    def test_phase2_classifies_true_footnote_block_and_parses_two_digit_labels(self) -> None:
+        class _FakePage:
+            def __init__(self, chars: list[dict[str, object]], *, height: float = 200) -> None:
+                self.chars = chars
+                self.height = height
+
+            def extract_tables(self) -> list[list[list[str]]]:
+                return []
+
+        chars = [
+            # Main body text (larger font)
+            {"text": "B", "x0": 10, "x1": 14, "top": 30, "bottom": 42, "doctop": 30, "size": 12},
+            # Bottom region footnotes
+            {"text": "2", "x0": 10, "x1": 14, "top": 150, "bottom": 158, "doctop": 150, "size": 9},
+            {"text": " ", "x0": 14, "x1": 16, "top": 150, "bottom": 158, "doctop": 150, "size": 9},
+            {"text": "A", "x0": 16, "x1": 20, "top": 150, "bottom": 158, "doctop": 150, "size": 9},
+            {"text": "3", "x0": 10, "x1": 14, "top": 160, "bottom": 168, "doctop": 160, "size": 9},
+            {"text": " ", "x0": 14, "x1": 16, "top": 160, "bottom": 168, "doctop": 160, "size": 9},
+            {"text": "B", "x0": 16, "x1": 20, "top": 160, "bottom": 168, "doctop": 160, "size": 9},
+            {"text": "1", "x0": 10, "x1": 12, "top": 170, "bottom": 178, "doctop": 170, "size": 9},
+            {"text": "0", "x0": 12, "x1": 14, "top": 170, "bottom": 178, "doctop": 170, "size": 9},
+            {"text": " ", "x0": 14, "x1": 16, "top": 170, "bottom": 178, "doctop": 170, "size": 9},
+            {"text": "C", "x0": 16, "x1": 20, "top": 170, "bottom": 178, "doctop": 170, "size": 9},
+            {"text": "1", "x0": 10, "x1": 12, "top": 180, "bottom": 188, "doctop": 180, "size": 9},
+            {"text": "1", "x0": 12, "x1": 14, "top": 180, "bottom": 188, "doctop": 180, "size": 9},
+            {"text": " ", "x0": 14, "x1": 16, "top": 180, "bottom": 188, "doctop": 180, "size": 9},
+            {"text": "D", "x0": 16, "x1": 20, "top": 180, "bottom": 188, "doctop": 180, "size": 9},
+        ]
+        debug = _build_phase2_bottom_region_debug_for_page(_FakePage(chars), page_number=7)
+        self.assertEqual("true_footnote_block", debug["classification"])
+        self.assertEqual(["2", "3", "10", "11"], debug["parsed_body_labels"])
+
+    def test_phase2_classifies_ordinary_numbered_list_as_non_footnote(self) -> None:
+        class _FakePage:
+            def __init__(self, chars: list[dict[str, object]], *, height: float = 200) -> None:
+                self.chars = chars
+                self.height = height
+
+            def extract_tables(self) -> list[list[list[str]]]:
+                return []
+
+        chars = [
+            {"text": "1", "x0": 10, "x1": 14, "top": 150, "bottom": 162, "doctop": 150, "size": 12},
+            {"text": ".", "x0": 14, "x1": 16, "top": 150, "bottom": 162, "doctop": 150, "size": 12},
+            {"text": " ", "x0": 16, "x1": 18, "top": 150, "bottom": 162, "doctop": 150, "size": 12},
+            {"text": "R", "x0": 18, "x1": 22, "top": 150, "bottom": 162, "doctop": 150, "size": 12},
+            {"text": "2", "x0": 10, "x1": 14, "top": 165, "bottom": 177, "doctop": 165, "size": 12},
+            {"text": ".", "x0": 14, "x1": 16, "top": 165, "bottom": 177, "doctop": 165, "size": 12},
+            {"text": " ", "x0": 16, "x1": 18, "top": 165, "bottom": 177, "doctop": 165, "size": 12},
+            {"text": "R", "x0": 18, "x1": 22, "top": 165, "bottom": 177, "doctop": 165, "size": 12},
+            {"text": "3", "x0": 10, "x1": 14, "top": 180, "bottom": 192, "doctop": 180, "size": 12},
+            {"text": ".", "x0": 14, "x1": 16, "top": 180, "bottom": 192, "doctop": 180, "size": 12},
+            {"text": " ", "x0": 16, "x1": 18, "top": 180, "bottom": 192, "doctop": 180, "size": 12},
+            {"text": "R", "x0": 18, "x1": 22, "top": 180, "bottom": 192, "doctop": 180, "size": 12},
+        ]
+        debug = _build_phase2_bottom_region_debug_for_page(_FakePage(chars), page_number=8)
+        self.assertEqual("ordinary_numbered_list", debug["classification"])
+        self.assertEqual([], debug["parsed_body_labels"])
+
+    def test_phase2_classifies_table_region_as_non_footnote(self) -> None:
+        class _FakePage:
+            def __init__(self, chars: list[dict[str, object]], *, height: float = 200) -> None:
+                self.chars = chars
+                self.height = height
+
+            def extract_tables(self) -> list[list[list[str]]]:
+                return [
+                    [["DWH EF", "0.80"], ["CZ2", "0.65"]],
+                ]
+
+        chars = [
+            {"text": "D", "x0": 10, "x1": 14, "top": 155, "bottom": 165, "doctop": 155, "size": 11},
+            {"text": "W", "x0": 14, "x1": 18, "top": 155, "bottom": 165, "doctop": 155, "size": 11},
+            {"text": "H", "x0": 18, "x1": 22, "top": 155, "bottom": 165, "doctop": 155, "size": 11},
+            {"text": " ", "x0": 22, "x1": 24, "top": 155, "bottom": 165, "doctop": 155, "size": 11},
+            {"text": "E", "x0": 24, "x1": 28, "top": 155, "bottom": 165, "doctop": 155, "size": 11},
+            {"text": "F", "x0": 28, "x1": 32, "top": 155, "bottom": 165, "doctop": 155, "size": 11},
+            {"text": " ", "x0": 32, "x1": 34, "top": 155, "bottom": 165, "doctop": 155, "size": 11},
+            {"text": "0", "x0": 34, "x1": 38, "top": 155, "bottom": 165, "doctop": 155, "size": 11},
+            {"text": ".", "x0": 38, "x1": 40, "top": 155, "bottom": 165, "doctop": 155, "size": 11},
+            {"text": "8", "x0": 40, "x1": 44, "top": 155, "bottom": 165, "doctop": 155, "size": 11},
+            {"text": "0", "x0": 44, "x1": 48, "top": 155, "bottom": 165, "doctop": 155, "size": 11},
+        ]
+        debug = _build_phase2_bottom_region_debug_for_page(_FakePage(chars), page_number=19)
+        self.assertEqual("table_region", debug["classification"])
+        self.assertEqual([], debug["parsed_body_labels"])
 
     def test_parse_pdf_file_uses_pdfplumber_primary_extraction(self) -> None:
         class _FakePage:
