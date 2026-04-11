@@ -286,8 +286,13 @@ def _collect_bottom_region_lines(page: Any) -> list[dict[str, Any]]:
     page_height = float(getattr(page, "height", 0.0) or 0.0)
     if page_height <= 0:
         page_height = float(max(float(ch.get("bottom", 0.0)) for ch in chars))
-    cutoff_top = page_height * 0.72
+    # Keep Phase 2 conservative: examine only the lower slice of the page to
+    # reduce body-prose contamination that can mask true footnote signals.
+    cutoff_top = page_height * 0.75
     bottom_chars = [ch for ch in chars if float(ch.get("top", 0.0)) >= cutoff_top]
+    if len(bottom_chars) < 10:
+        cutoff_top = page_height * 0.70
+        bottom_chars = [ch for ch in chars if float(ch.get("top", 0.0)) >= cutoff_top]
     line_chars = _group_page_chars_into_lines(bottom_chars)
     lines: list[dict[str, Any]] = []
     for chars_in_line in line_chars:
@@ -308,7 +313,7 @@ def _collect_bottom_region_lines(page: Any) -> list[dict[str, Any]]:
 def _parse_footnote_bodies_from_lines(lines: list[dict[str, Any]]) -> dict[str, str]:
     parsed: dict[str, str] = {}
     current_label: str | None = None
-    label_pattern = re.compile(r"^(\d{1,2})\s+(\S.*)$")
+    label_pattern = re.compile(r"^(\d{1,2})(?:[.)])?\s+(\S.*)$")
 
     for line in lines:
         text = str(line["text"]).strip()
@@ -343,7 +348,7 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]]) -> dict[str,
     line_size_median = float(median(line["median_size"] for line in lines if line["median_size"] > 0)) if lines else 0.0
 
     numbered_prefix = re.compile(r"^\s*(\d{1,2})([.)])\s+")
-    footnote_prefix = re.compile(r"^\s*(\d{1,2})\s+\S")
+    footnote_prefix = re.compile(r"^\s*(\d{1,2})(?:[.)])?\s+\S")
     numbered_list_lines = [line for line in lines if numbered_prefix.match(str(line["text"]))]
     footnote_candidate_lines = [line for line in lines if footnote_prefix.match(str(line["text"]))]
 
@@ -389,11 +394,21 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]]) -> dict[str,
     parsed_labels = list(parsed_bodies.keys())
     parsed_ids = [int(label) for label in parsed_labels if label.isdigit()]
 
+    # Ignore footer-only regions (e.g., isolated page numbers at far-right).
+    if len(lines) <= 2 and len(parsed_ids) <= 1:
+        reasons.append("footer_or_page_number_only")
+        return {
+            "classification": "unknown",
+            "reasons": reasons,
+            "parsed_body_labels": [],
+            "parsed_bodies": {},
+        }
+
     if len(parsed_ids) >= 2:
         sorted_ids = sorted(parsed_ids)
         small_text = line_size_median > 0 and page_size_median > 0 and line_size_median <= page_size_median * 0.9
         has_local_sequence = any((b - a) == 1 for a, b in zip(sorted_ids, sorted_ids[1:]))
-        if has_local_sequence and small_text:
+        if has_local_sequence and small_text and len(footnote_candidate_lines) >= 2:
             reasons.extend(["sequential_numeric_labels", "smaller_bottom_text"])
             return {
                 "classification": "true_footnote_block",

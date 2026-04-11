@@ -215,6 +215,30 @@ class PDFParserTests(unittest.TestCase):
         self.assertEqual("true_footnote_block", debug["classification"])
         self.assertEqual(["2", "3", "10", "11"], debug["parsed_body_labels"])
 
+    def test_phase2_parses_dotted_labels_in_true_footnote_block(self) -> None:
+        class _FakePage:
+            def __init__(self, chars: list[dict[str, object]], *, height: float = 200) -> None:
+                self.chars = chars
+                self.height = height
+
+            def extract_tables(self) -> list[list[list[str]]]:
+                return []
+
+        chars = [
+            {"text": "B", "x0": 10, "x1": 14, "top": 20, "bottom": 32, "doctop": 20, "size": 12},
+            {"text": "2", "x0": 10, "x1": 14, "top": 160, "bottom": 168, "doctop": 160, "size": 9},
+            {"text": ".", "x0": 14, "x1": 16, "top": 160, "bottom": 168, "doctop": 160, "size": 9},
+            {"text": " ", "x0": 16, "x1": 18, "top": 160, "bottom": 168, "doctop": 160, "size": 9},
+            {"text": "A", "x0": 18, "x1": 22, "top": 160, "bottom": 168, "doctop": 160, "size": 9},
+            {"text": "3", "x0": 10, "x1": 14, "top": 170, "bottom": 178, "doctop": 170, "size": 9},
+            {"text": ".", "x0": 14, "x1": 16, "top": 170, "bottom": 178, "doctop": 170, "size": 9},
+            {"text": " ", "x0": 16, "x1": 18, "top": 170, "bottom": 178, "doctop": 170, "size": 9},
+            {"text": "B", "x0": 18, "x1": 22, "top": 170, "bottom": 178, "doctop": 170, "size": 9},
+        ]
+        debug = _build_phase2_bottom_region_debug_for_page(_FakePage(chars), page_number=7)
+        self.assertEqual("true_footnote_block", debug["classification"])
+        self.assertEqual(["2", "3"], debug["parsed_body_labels"])
+
     def test_phase2_classifies_ordinary_numbered_list_as_non_footnote(self) -> None:
         class _FakePage:
             def __init__(self, chars: list[dict[str, object]], *, height: float = 200) -> None:
