@@ -117,3 +117,10 @@ Phase 2 does **not**:
 - link anchors to bodies,
 - rewrite or strip source body text,
 - emit chunk footnote metadata.
+
+Current positive criteria for `true_footnote_block` are conservative and include:
+
+- lower-page region scan beginning at ~65% page height (with fallback lower if sparse),
+- table and ordinary-numbered-list negatives checked first,
+- at least one parsed numeric label (`1`-`3` digits),
+- and a line-start superscript-like numeric label prefix before content text.

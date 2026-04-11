@@ -286,12 +286,11 @@ def _collect_bottom_region_lines(page: Any) -> list[dict[str, Any]]:
     page_height = float(getattr(page, "height", 0.0) or 0.0)
     if page_height <= 0:
         page_height = float(max(float(ch.get("bottom", 0.0)) for ch in chars))
-    # Keep Phase 2 conservative: examine only the lower slice of the page to
-    # reduce body-prose contamination that can mask true footnote signals.
-    cutoff_top = page_height * 0.75
+    # Keep Phase 2 conservative but avoid clipping footnote starts.
+    cutoff_top = page_height * 0.65
     bottom_chars = [ch for ch in chars if float(ch.get("top", 0.0)) >= cutoff_top]
     if len(bottom_chars) < 10:
-        cutoff_top = page_height * 0.70
+        cutoff_top = page_height * 0.60
         bottom_chars = [ch for ch in chars if float(ch.get("top", 0.0)) >= cutoff_top]
     line_chars = _group_page_chars_into_lines(bottom_chars)
     lines: list[dict[str, Any]] = []
@@ -305,6 +304,7 @@ def _collect_bottom_region_lines(page: Any) -> list[dict[str, Any]]:
                 "text": line_text,
                 "bbox": _line_bbox(chars_in_line),
                 "median_size": float(median(line_sizes)) if line_sizes else 0.0,
+                "chars": chars_in_line,
             }
         )
     return lines
@@ -313,7 +313,7 @@ def _collect_bottom_region_lines(page: Any) -> list[dict[str, Any]]:
 def _parse_footnote_bodies_from_lines(lines: list[dict[str, Any]]) -> dict[str, str]:
     parsed: dict[str, str] = {}
     current_label: str | None = None
-    label_pattern = re.compile(r"^(\d{1,2})(?:[.)])?\s+(\S.*)$")
+    label_pattern = re.compile(r"^(\d{1,3})(?:[.)])?\s+(\S.*)$")
 
     for line in lines:
         text = str(line["text"]).strip()
@@ -325,6 +325,37 @@ def _parse_footnote_bodies_from_lines(lines: list[dict[str, Any]]) -> dict[str, 
         if current_label is not None:
             parsed[current_label] = f"{parsed[current_label]} {text}".strip()
     return parsed
+
+
+def _line_starts_with_superscript_numeric_label(line: dict[str, Any]) -> bool:
+    chars = list(line.get("chars", []) or [])
+    if not chars:
+        return False
+    idx = 0
+    while idx < len(chars) and str(chars[idx].get("text", "")).isspace():
+        idx += 1
+    run: list[dict[str, Any]] = []
+    while idx < len(chars) and str(chars[idx].get("text", "")).isdigit() and len(run) < 3:
+        run.append(chars[idx])
+        idx += 1
+    if not run or idx >= len(chars):
+        return False
+    next_text = str(chars[idx].get("text", ""))
+    if not next_text.isspace() and next_text not in {".", ")"}:
+        return False
+    # Require superscript-like geometry relative to the rest of the line.
+    line_chars = [
+        ch
+        for ch in chars
+        if ch not in run and str(ch.get("text", "")).strip() and str(ch.get("text", "")) not in {".", ")"}
+    ]
+    if not line_chars:
+        return False
+    line_size = median(float(ch.get("size", 0.0) or 0.0) for ch in line_chars)
+    line_top = median(float(ch.get("doctop", ch.get("top", 0.0))) for ch in line_chars)
+    run_size = median(float(ch.get("size", line_size) or line_size) for ch in run)
+    run_top = median(float(ch.get("doctop", ch.get("top", line_top))) for ch in run)
+    return run_size <= line_size * 0.9 and (line_top - run_top) >= 0.2
 
 
 def _classify_bottom_region(page: Any, lines: list[dict[str, Any]]) -> dict[str, Any]:
@@ -347,8 +378,8 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]]) -> dict[str,
     page_size_median = float(median(non_bottom_sizes)) if non_bottom_sizes else (float(median(page_sizes)) if page_sizes else 0.0)
     line_size_median = float(median(line["median_size"] for line in lines if line["median_size"] > 0)) if lines else 0.0
 
-    numbered_prefix = re.compile(r"^\s*(\d{1,2})([.)])\s+")
-    footnote_prefix = re.compile(r"^\s*(\d{1,2})(?:[.)])?\s+\S")
+    numbered_prefix = re.compile(r"^\s*(\d{1,3})([.)])\s+")
+    footnote_prefix = re.compile(r"^\s*(\d{1,3})(?:[.)])?\s+\S")
     numbered_list_lines = [line for line in lines if numbered_prefix.match(str(line["text"]))]
     footnote_candidate_lines = [line for line in lines if footnote_prefix.match(str(line["text"]))]
 
@@ -395,7 +426,7 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]]) -> dict[str,
     parsed_ids = [int(label) for label in parsed_labels if label.isdigit()]
 
     # Ignore footer-only regions (e.g., isolated page numbers at far-right).
-    if len(lines) <= 2 and len(parsed_ids) <= 1:
+    if len(lines) <= 2 and len(parsed_ids) == 0:
         reasons.append("footer_or_page_number_only")
         return {
             "classification": "unknown",
@@ -404,12 +435,11 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]]) -> dict[str,
             "parsed_bodies": {},
         }
 
-    if len(parsed_ids) >= 2:
-        sorted_ids = sorted(parsed_ids)
+    if len(parsed_ids) >= 1:
         small_text = line_size_median > 0 and page_size_median > 0 and line_size_median <= page_size_median * 0.9
-        has_local_sequence = any((b - a) == 1 for a, b in zip(sorted_ids, sorted_ids[1:]))
-        if has_local_sequence and small_text and len(footnote_candidate_lines) >= 2:
-            reasons.extend(["sequential_numeric_labels", "smaller_bottom_text"])
+        superscript_label_present = any(_line_starts_with_superscript_numeric_label(line) for line in footnote_candidate_lines)
+        if superscript_label_present and small_text:
+            reasons.extend(["superscript_numeric_label_prefix", "smaller_bottom_text"])
             return {
                 "classification": "true_footnote_block",
                 "reasons": reasons,
