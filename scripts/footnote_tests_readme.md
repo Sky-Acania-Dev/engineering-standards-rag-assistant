@@ -126,3 +126,8 @@ Current positive criteria for `true_footnote_block` are conservative and include
 - table and ordinary-numbered-list negatives checked first,
 - at least one parsed numeric label (`1`-`3` digits),
 - and a line-start superscript-like numeric label prefix before content text.
+
+Notes:
+
+- Footer artifacts like `"| Page"` are filtered from parsed label/content pairs before final pass/fail checks.
+- `small_text` remains in debug checks for diagnostics, but does not block classification on its own.

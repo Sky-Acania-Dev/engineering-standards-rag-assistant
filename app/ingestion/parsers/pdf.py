@@ -358,7 +358,7 @@ def _line_starts_with_superscript_numeric_label(line: dict[str, Any]) -> bool:
     return run_size <= line_size * 0.9 and (line_top - run_top) >= 0.2
 
 
-def _classify_bottom_region(page: Any, lines: list[dict[str, Any]]) -> dict[str, Any]:
+def _classify_bottom_region(page: Any, lines: list[dict[str, Any]], *, page_number: int) -> dict[str, Any]:
     def _result(
         *,
         classification: str,
@@ -457,7 +457,14 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]]) -> dict[str,
             checks=checks,
         )
 
-    parsed_bodies = _parse_footnote_bodies_from_lines(lines)
+    parsed_bodies_raw = _parse_footnote_bodies_from_lines(lines)
+    parsed_bodies = {
+        label: content
+        for label, content in parsed_bodies_raw.items()
+        if not (content.strip() in {"| Page", "Page", "|Page"})
+        and not (label.isdigit() and int(label) == page_number and content.strip().startswith("| Page"))
+        and not (label.isdigit() and int(label) >= 100)
+    }
     parsed_labels = list(parsed_bodies.keys())
     parsed_ids = [int(label) for label in parsed_labels if label.isdigit()]
     checks["parsed_ids_count"] = len(parsed_ids)
@@ -478,8 +485,10 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]]) -> dict[str,
         superscript_label_present = any(_line_starts_with_superscript_numeric_label(line) for line in footnote_candidate_lines)
         checks["small_text"] = small_text
         checks["superscript_label_present"] = superscript_label_present
-        if superscript_label_present and small_text:
-            reasons.extend(["superscript_numeric_label_prefix", "smaller_bottom_text"])
+        if superscript_label_present:
+            reasons.extend(["superscript_numeric_label_prefix"])
+            if small_text:
+                reasons.append("smaller_bottom_text")
             checks["passes_true_footnote_check"] = True
             return _result(
                 classification="true_footnote_block",
@@ -510,7 +519,7 @@ def _build_phase2_bottom_region_debug_for_page(page: Any, page_number: int) -> d
         }
     else:
         region_bbox = None
-    classified = _classify_bottom_region(page, lines)
+    classified = _classify_bottom_region(page, lines, page_number=page_number)
     detected_footnotes: list[dict[str, Any]] = []
     if classified["classification"] == "true_footnote_block":
         for label in classified["parsed_body_labels"]:
