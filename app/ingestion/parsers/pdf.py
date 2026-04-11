@@ -438,6 +438,16 @@ def _build_phase2_bottom_region_debug_for_page(page: Any, page_number: int) -> d
     else:
         region_bbox = None
     classified = _classify_bottom_region(page, lines)
+    detected_footnotes: list[dict[str, Any]] = []
+    if classified["classification"] == "true_footnote_block":
+        for label in classified["parsed_body_labels"]:
+            detected_footnotes.append(
+                {
+                    "anchor_number": int(label),
+                    "footnote_content_page": page_number,
+                    "footnote_content_detected": classified["parsed_bodies"].get(label, ""),
+                }
+            )
     return {
         "page": page_number,
         "region_bbox": region_bbox,
@@ -445,6 +455,7 @@ def _build_phase2_bottom_region_debug_for_page(page: Any, page_number: int) -> d
         "reasons_for_classification": classified["reasons"],
         "parsed_body_labels": classified["parsed_body_labels"],
         "parsed_bodies": classified["parsed_bodies"],
+        "detected_footnotes": detected_footnotes,
     }
 
 

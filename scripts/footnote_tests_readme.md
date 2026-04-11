@@ -105,6 +105,10 @@ Phase 2 output is page-level JSON with:
 - `reasons_for_classification`
 - `parsed_body_labels` (only when `true_footnote_block`)
 - `parsed_bodies` (only when `true_footnote_block`)
+- `detected_footnotes` with:
+  - `anchor_number`
+  - `footnote_content_page`
+  - `footnote_content_detected`
 
 ## Phase 2 scope boundary
 

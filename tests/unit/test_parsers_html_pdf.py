@@ -214,6 +214,13 @@ class PDFParserTests(unittest.TestCase):
         debug = _build_phase2_bottom_region_debug_for_page(_FakePage(chars), page_number=7)
         self.assertEqual("true_footnote_block", debug["classification"])
         self.assertEqual(["2", "3", "10", "11"], debug["parsed_body_labels"])
+        self.assertEqual(
+            [2, 3, 10, 11],
+            [item["anchor_number"] for item in debug["detected_footnotes"]],
+        )
+        self.assertTrue(
+            all(item["footnote_content_page"] == 7 for item in debug["detected_footnotes"])
+        )
 
     def test_phase2_parses_dotted_labels_in_true_footnote_block(self) -> None:
         class _FakePage:
@@ -265,6 +272,7 @@ class PDFParserTests(unittest.TestCase):
         debug = _build_phase2_bottom_region_debug_for_page(_FakePage(chars), page_number=8)
         self.assertEqual("ordinary_numbered_list", debug["classification"])
         self.assertEqual([], debug["parsed_body_labels"])
+        self.assertEqual([], debug["detected_footnotes"])
 
     def test_phase2_classifies_table_region_as_non_footnote(self) -> None:
         class _FakePage:
