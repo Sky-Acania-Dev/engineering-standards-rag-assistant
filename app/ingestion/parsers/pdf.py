@@ -108,13 +108,30 @@ def _extract_structured_page_text_pdfplumber(page: Any, page_number: int) -> str
 
         if os.getenv("PDF_FOOTNOTE_DEBUG", "").lower() in {"1", "true", "yes"}:
             logger.debug(
-                "pdf footnote debug page=%s line_count=%s anchors=%s resolved=%s dropped_unresolved=%s",
+                "pdf footnote debug page=%s line_count=%s anchors=%s bodies=%s resolved=%s dropped_unresolved=%s",
                 page_number,
                 len(visual_lines),
                 len(anchors),
+                len(footnote_bodies),
                 len(resolved_for_page),
                 len(unresolved),
             )
+            for anchor in anchors:
+                logger.debug(
+                    "anchor page=%s id=%s line=%s line_final=%s punct_adjacent=%s heading_like=%s bbox=%s anchor_text=%s",
+                    anchor.page_number,
+                    anchor.label,
+                    anchor.line_index,
+                    anchor.anchor_insert_x >= max(c.x1 for c in visual_lines[anchor.line_index].chars) - 0.5,
+                    bool(anchor.anchor_text and anchor.anchor_text[-1:] in {'.', ',', ')', '"'}),
+                    len(''.join(c.text for c in visual_lines[anchor.line_index].chars).split()) <= 12,
+                    anchor.bbox,
+                    anchor.anchor_text,
+                )
+            for body in footnote_bodies:
+                logger.debug("footer_body page=%s id=%s lines=%s content=%s", body.page_number, body.label, body.line_indexes, body.content[:120])
+            for dropped in unresolved:
+                logger.debug("dropped_anchor page=%s id=%s line=%s anchor_text=%s", dropped.page_number, dropped.label, dropped.line_index, dropped.anchor_text)
     else:
         page_text = (page.extract_text() or "").strip()
         if page_text:

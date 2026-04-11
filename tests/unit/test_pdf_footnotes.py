@@ -41,6 +41,18 @@ class FootnotePipelineTests(unittest.TestCase):
         self.assertEqual([], bodies)
 
 
+
+    def test_line_final_anchor_detected(self) -> None:
+        body = self._chars_for_text("Section R802", y_top=40.0, size=10.0, order_start=0)
+        sup = self._chars_for_text("19", y_top=37.0, size=7.0, x_start=body[-1].x1 + 0.4, order_start=100)
+        footer = self._chars_for_text("19 line-final footnote", y_top=220.0, size=8.0, order_start=200)
+        lines = build_visual_lines(body + sup + footer)
+        anchors = detect_superscript_anchors(lines)
+        bodies, idx = detect_footnote_bodies(lines, page_height=300.0)
+        resolved, unresolved, _ = link_anchors_to_bodies(anchors, bodies)
+        page = reconstruct_page_text(lines, resolved=resolved, unresolved=unresolved, footnote_line_indexes=idx)
+        self.assertIn("Section R802[footnote: 19]", "\n".join(page.lines))
+
     def test_heading_title_anchor_detected(self) -> None:
         title = self._chars_for_text("Chapter 1: Intro", y_top=30.0, size=12.0, order_start=0)
         sup = self._chars_for_text("1", y_top=27.5, size=9.5, x_start=title[-1].x1 + 0.3, order_start=100)
