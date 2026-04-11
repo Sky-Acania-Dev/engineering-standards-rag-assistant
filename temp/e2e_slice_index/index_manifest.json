@@ -1,8 +1,0 @@
-{
-  "documents": 1,
-  "chunks": 89,
-  "embedded_chunks": 88,
-  "embedding_dimension": 384,
-  "embedder_provider": "sentence_transformer",
-  "embedding_model": "sentence-transformers/all-MiniLM-L6-v2"
-}
