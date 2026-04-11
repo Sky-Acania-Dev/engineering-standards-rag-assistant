@@ -26,6 +26,22 @@ class FootnotePipelineTests(unittest.TestCase):
 
 
 
+
+    def test_first_footer_body_not_dropped(self) -> None:
+        chars = []
+        chars.extend(self._chars_for_text("1 first note", y_top=110.0, size=9.0, order_start=0))
+        chars.extend(self._chars_for_text("2 second note", y_top=124.0, size=9.0, order_start=80))
+        lines = build_visual_lines(chars)
+        bodies, _ = detect_footnote_bodies(lines, page_height=300.0)
+        self.assertEqual(["1", "2"], [b.label for b in bodies])
+
+    def test_multidigit_inline_anchor_grouping(self) -> None:
+        body = self._chars_for_text("10 TAC Chapter 21", y_top=40.0, size=10.0, order_start=0)
+        sup = self._chars_for_text("23", y_top=37.0, size=7.0, x_start=body[-1].x1 + 0.2, order_start=100)
+        lines = build_visual_lines(body + sup)
+        anchors = detect_superscript_anchors(lines)
+        self.assertTrue(any(a.label == "23" for a in anchors))
+
     def test_footer_detection_not_limited_to_extreme_bottom(self) -> None:
         chars = self._chars_for_text("1 Code references throughout this document", y_top=130.0, size=8.0, order_start=0)
         lines = build_visual_lines(chars)

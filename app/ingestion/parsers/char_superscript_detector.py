@@ -42,7 +42,7 @@ def detect_superscript_anchors(lines: list[LineInfo]) -> list[AnchorCandidate]:
                     continue
                 if (
                     nxt.text.isdigit()
-                    and gap <= max(2.6, line.body_size * 0.4)
+                    and gap <= max(4.8, line.body_size * 0.65)
                     and abs(nxt.bottom - run[-1].bottom) <= max(1.4, line.body_size * 0.3)
                 ):
                     run.append(nxt)

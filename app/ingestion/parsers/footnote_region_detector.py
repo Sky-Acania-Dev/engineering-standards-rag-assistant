@@ -31,12 +31,9 @@ def detect_footnote_bodies(lines: list[LineInfo], page_height: float) -> tuple[l
             continue
         if _is_footer_artifact(text, line, page_height=page_height):
             continue
-        size_ok = line.body_size <= median_size * 1.35 if median_size > 0 else True
-        if size_ok and (
-            _looks_like_footnote_lexical(text)
-            or _has_vertical_gap(lines_by_top, pos)
-            or line.top >= page_height * 0.4
-        ):
+        size_ok = line.body_size <= median_size * 1.45 if median_size > 0 else True
+        if size_ok:
+            # Start at first plausible parsed label line; avoid skipping the first footer footnote entry.
             first_candidate_pos = pos
             break
 
