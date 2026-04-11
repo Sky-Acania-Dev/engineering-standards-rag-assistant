@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
-from app.ingestion.parsers.pdfplumber_layout import LineInfo
+from app.ingestion.parsers.pdfplumber_layout import CharInfo, LineInfo
 
 
 @dataclass(frozen=True)
@@ -21,18 +21,21 @@ def detect_footnote_bodies(lines: list[LineInfo], page_height: float) -> tuple[l
 
     lines_by_top = sorted(enumerate(lines), key=lambda item: item[1].top)
     median_size = _page_body_size(lines)
-    min_top = page_height * 0.52
+    min_top = page_height * 0.5
 
     first_candidate_pos: int | None = None
     for pos, (_, line) in enumerate(lines_by_top):
+        parsed = _parse_label_from_line(line)
         text = "".join(c.text for c in line.chars).strip()
-        parsed = _parse_label_line(text)
-        if not parsed or line.top < min_top:
+        if line.top < min_top or parsed is None:
             continue
-        size_ok = line.body_size <= median_size * 1.2 if median_size > 0 else True
+        if _is_footer_artifact(text, line, page_height=page_height):
+            continue
+        size_ok = line.body_size <= median_size * 1.25 if median_size > 0 else True
         if size_ok and (_looks_like_footnote_lexical(text) or _has_vertical_gap(lines_by_top, pos)):
             first_candidate_pos = pos
             break
+
     if first_candidate_pos is None:
         return [], set()
 
@@ -44,11 +47,14 @@ def detect_footnote_bodies(lines: list[LineInfo], page_height: float) -> tuple[l
     current_lines: list[int] = []
 
     for idx, line in lines_by_top[first_candidate_pos:]:
-        text = "".join(c.text for c in line.chars).strip()
-        if not text:
+        raw_text = "".join(c.text for c in line.chars).strip()
+        if not raw_text:
             continue
-        parsed = _parse_label_line(text)
-        if parsed:
+        if _is_footer_artifact(raw_text, line, page_height=page_height):
+            continue
+
+        parsed = _parse_label_from_line(line)
+        if parsed is not None:
             label, remainder = parsed
             if current_label and current_text:
                 bodies.append(
@@ -68,7 +74,7 @@ def detect_footnote_bodies(lines: list[LineInfo], page_height: float) -> tuple[l
             continue
 
         if current_label is not None:
-            current_text.append(text)
+            current_text.append(raw_text)
             left = min(c.x0 for c in line.chars)
             right = max(c.x1 for c in line.chars)
             current_bbox = (
@@ -99,19 +105,67 @@ def detect_footnote_bodies(lines: list[LineInfo], page_height: float) -> tuple[l
     return ordered, consumed_lines
 
 
-def _parse_label_line(text: str) -> tuple[str, str] | None:
-    compact = text.strip()
-    if not compact:
+def _parse_label_from_line(line: LineInfo) -> tuple[str, str] | None:
+    chars = [c for c in line.chars if c.text]
+    if not chars:
         return None
-    spaced = re.match(r"^(\d(?:\s+\d){0,2})[\).\-:]?\s+(.*)$", compact)
-    if spaced:
-        label = spaced.group(1).replace(" ", "")
-        if label.isdigit():
-            return str(int(label)), spaced.group(2).strip()
-    simple = re.match(r"^(\d{1,3})[\).\-:]?\s+(.*)$", compact)
-    if simple:
-        return str(int(simple.group(1))), simple.group(2).strip()
-    return None
+
+    first_non_space = next((i for i, c in enumerate(chars) if c.text.strip()), None)
+    if first_non_space is None:
+        return None
+    i = first_non_space
+
+    # first token cluster
+    first_cluster: list[CharInfo] = []
+    while i < len(chars) and chars[i].text.strip():
+        first_cluster.append(chars[i])
+        i += 1
+    first_token = "".join(c.text for c in first_cluster).strip()
+
+    # optional second numeric cluster for split digits: "1 0 http"
+    second_token = ""
+    j = i
+    while j < len(chars) and not chars[j].text.strip():
+        j += 1
+    k = j
+    second_cluster: list[CharInfo] = []
+    while k < len(chars) and chars[k].text.strip():
+        second_cluster.append(chars[k])
+        k += 1
+    if second_cluster:
+        second_token = "".join(c.text for c in second_cluster).strip()
+
+    label_candidate = first_token
+    consume_until = i
+    if re.fullmatch(r"\d", first_token) and re.fullmatch(r"\d", second_token):
+        gap = second_cluster[0].x0 - first_cluster[-1].x1
+        if gap <= max(8.0, line.body_size * 0.9):
+            label_candidate = first_token + second_token
+            consume_until = k
+
+    stripped_label = label_candidate.rstrip(').:-')
+    if not re.fullmatch(r"\d{1,3}", stripped_label):
+        return None
+
+    remainder = "".join(c.text for c in chars[consume_until:]).strip()
+    if not remainder:
+        return None
+    return str(int(stripped_label)), remainder
+
+
+def _is_footer_artifact(text: str, line: LineInfo, *, page_height: float) -> bool:
+    normalized = " ".join(text.split())
+    if not normalized:
+        return True
+    if normalized in {"| Page", "Page", "|"}:
+        return True
+    if re.fullmatch(r"\d+\s*\|\s*Page", normalized, flags=re.IGNORECASE):
+        return True
+    if re.fullmatch(r"Page\s*\d+", normalized, flags=re.IGNORECASE):
+        return True
+    if line.top >= page_height * 0.95 and len(normalized.split()) <= 3:
+        return True
+    return False
 
 
 def _has_vertical_gap(lines_by_top: list[tuple[int, LineInfo]], pos: int) -> bool:

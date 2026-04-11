@@ -94,4 +94,9 @@ def _neighbor_text(chars: tuple[CharInfo, ...], anchor_start: int, *, punctuatio
     if punctuation_adjacent:
         prefix = prefix.rstrip(".,;:'\"”’)]}")
     tokens = prefix.split()
-    return " ".join(tokens[-6:]).strip()
+    window = tokens[-6:]
+    if len(window) >= 3 and len(window[0]) == 1:
+        window = window[1:]
+    cleaned = " ".join(window).strip()
+    cleaned = re.sub(r"^(?:and|or|for)\s+", "", cleaned, flags=re.IGNORECASE)
+    return cleaned

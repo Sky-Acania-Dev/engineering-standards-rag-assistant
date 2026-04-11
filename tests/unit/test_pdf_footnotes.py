@@ -24,6 +24,22 @@ class FootnotePipelineTests(unittest.TestCase):
             order += 1
         return chars
 
+
+    def test_leading_label_parsing_for_url_line(self) -> None:
+        line = self._chars_for_text("2 http://example.com/x", y_top=220.0, size=8.0, order_start=0)
+        lines = build_visual_lines(line)
+        bodies, _ = detect_footnote_bodies(lines, page_height=300.0)
+        self.assertEqual("2", bodies[0].label)
+        self.assertTrue(bodies[0].content.startswith("http://"))
+
+    def test_footer_filtering_excludes_page_artifacts(self) -> None:
+        lines = build_visual_lines(
+            self._chars_for_text("6 | Page", y_top=286.0, size=8.0, order_start=0)
+            + self._chars_for_text("Page 7", y_top=294.0, size=8.0, order_start=40)
+        )
+        bodies, _ = detect_footnote_bodies(lines, page_height=300.0)
+        self.assertEqual([], bodies)
+
     def test_period_comma_and_citation_preservation(self) -> None:
         chars = []
         l1 = self._chars_for_text("40 CFR Part 745.", y_top=30.0, size=10.0, order_start=0)
