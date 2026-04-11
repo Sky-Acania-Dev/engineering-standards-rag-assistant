@@ -62,15 +62,21 @@ def detect_superscript_anchors(lines: list[LineInfo]) -> list[AnchorCandidate]:
             prev_gap = ch.x0 - prev_char.x1 if prev_char else 99.0
             next_gap = next_char.x0 - run[-1].x1 if next_char else 99.0
 
-            is_small = run_size <= line.body_size * 0.97
-            is_raised = run_bottom <= line.baseline - max(0.15, line.body_size * 0.03)
-            attached_left = prev_char is not None and prev_gap <= max(2.8, line.body_size * 0.35)
+            surrounding_sizes = [c.size for c in chars[max(0, idx - 6):idx] if c.text.strip() and c.size > 0]
+            local_ref_size = (sum(surrounding_sizes) / len(surrounding_sizes)) if surrounding_sizes else line.body_size
+            is_small = run_size <= max(local_ref_size * 1.02, line.body_size * 1.02)
+            is_raised = run_bottom <= line.baseline - max(0.08, line.body_size * 0.02)
+            attached_left = prev_char is not None and prev_gap <= max(3.2, line.body_size * 0.42)
             line_final = next_char is None
             punctuation_adjacent = prev_char is not None and prev_char.text in _PUNCT
-            separated_right = line_final or next_gap >= -max(0.8, line.body_size * 0.15)
+            separated_right = line_final or next_gap >= -max(1.0, line.body_size * 0.2)
 
             heading_like = len("".join(c.text for c in chars).split()) <= 12
-            if is_small and (is_raised or heading_like) and attached_left and separated_right:
+            relative_prev_raised = prev_char is not None and run_bottom <= prev_char.bottom - max(0.15, line.body_size * 0.02)
+            punctuation_case = punctuation_adjacent and relative_prev_raised
+            line_final_case = line_final and relative_prev_raised
+            baseline_case = is_small and is_raised and relative_prev_raised
+            if attached_left and separated_right and (punctuation_case or line_final_case or baseline_case or (heading_like and is_raised and relative_prev_raised)):
                 left = min(c.x0 for c in run)
                 top = min(c.top for c in run)
                 right = max(c.x1 for c in run)

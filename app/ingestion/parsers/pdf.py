@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 import logging
 import os
+import sys
 
 from app.ingestion.parsers.char_superscript_detector import detect_superscript_anchors
 from app.ingestion.parsers.footnote_linker import link_anchors_to_bodies
@@ -132,6 +133,16 @@ def _extract_structured_page_text_pdfplumber(page: Any, page_number: int) -> str
                 logger.debug("footer_body page=%s id=%s lines=%s content=%s", body.page_number, body.label, body.line_indexes, body.content[:120])
             for dropped in unresolved:
                 logger.debug("dropped_anchor page=%s id=%s line=%s anchor_text=%s", dropped.page_number, dropped.label, dropped.line_index, dropped.anchor_text)
+            debug_summary = (
+                f"[PDF_FOOTNOTE_DEBUG] page={page_number} anchors={len(anchors)} bodies={len(footnote_bodies)} "
+                f"resolved={len(resolved_for_page)} dropped={len(unresolved)}"
+            )
+            print(debug_summary, file=sys.stderr)
+            for anchor in anchors:
+                print(
+                    f"[PDF_FOOTNOTE_DEBUG] anchor id={anchor.label} line={anchor.line_index} text={anchor.anchor_text}",
+                    file=sys.stderr,
+                )
     else:
         page_text = (page.extract_text() or "").strip()
         if page_text:

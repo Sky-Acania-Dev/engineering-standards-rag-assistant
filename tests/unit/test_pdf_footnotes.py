@@ -42,6 +42,26 @@ class FootnotePipelineTests(unittest.TestCase):
 
 
 
+
+    def test_large_heading_font_anchor_detection(self) -> None:
+        title = self._chars_for_text("Chapter 1 Administration", y_top=20.0, size=16.0, order_start=0)
+        sup = self._chars_for_text("1", y_top=16.5, size=14.5, x_start=title[-1].x1 + 0.3, order_start=120)
+        body = self._chars_for_text("1 heading footnote body", y_top=220.0, size=8.0, order_start=220)
+        lines = build_visual_lines(title + sup + body)
+        anchors = detect_superscript_anchors(lines)
+        self.assertTrue(any(a.label == "1" for a in anchors))
+
+    def test_period_adjacent_745_anchor_detected(self) -> None:
+        line = self._chars_for_text("40 CFR Part 745.", y_top=40.0, size=10.0, order_start=0)
+        sup = self._chars_for_text("2", y_top=37.5, size=8.5, x_start=line[-1].x1 + 0.2, order_start=200)
+        footer = self._chars_for_text("2 url-two", y_top=220.0, size=8.0, order_start=300)
+        lines = build_visual_lines(line + sup + footer)
+        anchors = detect_superscript_anchors(lines)
+        bodies, idx = detect_footnote_bodies(lines, page_height=300.0)
+        resolved, unresolved, _ = link_anchors_to_bodies(anchors, bodies)
+        page = reconstruct_page_text(lines, resolved=resolved, unresolved=unresolved, footnote_line_indexes=idx)
+        self.assertIn("40 CFR Part 745.[footnote: 2]", "\n".join(page.lines))
+
     def test_line_final_anchor_detected(self) -> None:
         body = self._chars_for_text("Section R802", y_top=40.0, size=10.0, order_start=0)
         sup = self._chars_for_text("19", y_top=37.0, size=7.0, x_start=body[-1].x1 + 0.4, order_start=100)
