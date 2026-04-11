@@ -55,6 +55,14 @@ class FootnotePipelineTests(unittest.TestCase):
         self.assertEqual("2", bodies[0].label)
         self.assertTrue(bodies[0].content.startswith("http://"))
 
+    def test_two_digit_leading_label_not_split_into_content(self) -> None:
+        line = self._chars_for_text("1 0 http://example.com/ten", y_top=220.0, size=8.0, order_start=0)
+        lines = build_visual_lines(line)
+        bodies, _ = detect_footnote_bodies(lines, page_height=300.0)
+        self.assertEqual("10", bodies[0].label)
+        self.assertEqual("http://example.com/ten", bodies[0].content)
+        self.assertNotIn("1 0", bodies[0].content)
+
 
     def test_numbered_list_near_bottom_not_footnote_block(self) -> None:
         chars = []
@@ -202,6 +210,40 @@ class FootnotePipelineTests(unittest.TestCase):
         notes = [n for c in body for n in c.footnotes]
         self.assertTrue(any(n.id == "2" and n.linked is False for n in notes))
         self.assertTrue(any(n.id == "3" and n.linked is False for n in notes))
+
+    def test_numbered_list_does_not_emit_fnunlink_metadata(self) -> None:
+        class _FakePage:
+            images = []
+            height = 300.0
+
+            def __init__(self) -> None:
+                helper = FootnotePipelineTests()
+                self.chars = []
+                self.chars.extend(helper._chars_for_text("1 General requirement", y_top=190.0, size=10.0, order_start=0))
+                self.chars.extend(helper._chars_for_text("2 Installer shall verify", y_top=204.0, size=10.0, order_start=50))
+                self.chars.extend(helper._chars_for_text("3 Contractor must comply", y_top=218.0, size=10.0, order_start=100))
+
+            def extract_text(self) -> str:
+                return ""
+
+            def extract_tables(self):
+                return []
+
+        class _FakeDoc:
+            pages = [_FakePage()]
+            def __enter__(self):
+                return self
+            def __exit__(self, exc_type, exc, tb):
+                return None
+
+        class _FakePdfPlumber:
+            @staticmethod
+            def open(_: str):
+                return _FakeDoc()
+
+        with patch("app.ingestion.parsers.pdf._require_pdfplumber", return_value=_FakePdfPlumber):
+            parsed = parse_pdf_file("dummy.pdf")
+        self.assertNotIn("[FNUNLINK", parsed)
 
     def test_page_bottom_map_not_shifted_or_merged(self) -> None:
         class _FakePage:

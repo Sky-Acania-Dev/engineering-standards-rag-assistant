@@ -15,7 +15,12 @@ class FootnoteBody:
     line_indexes: tuple[int, ...]
 
 
-def detect_footnote_bodies(lines: list[LineInfo], page_height: float) -> tuple[list[FootnoteBody], set[int]]:
+def detect_footnote_bodies(
+    lines: list[LineInfo],
+    page_height: float,
+    *,
+    excluded_line_indexes: set[int] | None = None,
+) -> tuple[list[FootnoteBody], set[int]]:
     if not lines:
         return [], set()
 
@@ -24,7 +29,11 @@ def detect_footnote_bodies(lines: list[LineInfo], page_height: float) -> tuple[l
     min_top = page_height * 0.4
 
     first_candidate_pos: int | None = None
-    for pos, (_, line) in enumerate(lines_by_top):
+    excluded = excluded_line_indexes or set()
+
+    for pos, (line_idx, line) in enumerate(lines_by_top):
+        if line_idx in excluded:
+            continue
         parsed = _parse_label_from_line(line)
         text = "".join(c.text for c in line.chars).strip()
         if line.top < min_top or parsed is None:
@@ -47,6 +56,8 @@ def detect_footnote_bodies(lines: list[LineInfo], page_height: float) -> tuple[l
     current_lines: list[int] = []
 
     for idx, line in lines_by_top[first_candidate_pos:]:
+        if idx in excluded:
+            continue
         raw_text = "".join(c.text for c in line.chars).strip()
         if not raw_text:
             continue
@@ -103,7 +114,7 @@ def detect_footnote_bodies(lines: list[LineInfo], page_height: float) -> tuple[l
             deduped[body.label] = body
     ordered = sorted(deduped.values(), key=lambda b: int(b.label))
 
-    if not _is_valid_footnote_block(ordered, median_size):
+    if not _is_valid_footnote_block(ordered, lines_by_top, first_candidate_pos, page_height, median_size):
         return [], set()
     return ordered, consumed_lines
 
@@ -187,13 +198,62 @@ def _looks_like_table_row(text: str) -> bool:
     return bool(re.search(r"\S+\s{2,}\S+\s{2,}\S+", text))
 
 
-def _is_valid_footnote_block(bodies: list[FootnoteBody], median_size: float) -> bool:
+def _is_valid_footnote_block(
+    bodies: list[FootnoteBody],
+    lines_by_top: list[tuple[int, LineInfo]],
+    first_candidate_pos: int,
+    page_height: float,
+    median_size: float,
+) -> bool:
     if not bodies:
         return False
+
+    # Hard negative: long, prose-like numbered list entries are usually normal body content.
+    if len(bodies) >= 3:
+        long_entries = sum(1 for body in bodies if len(body.content.split()) >= 6 and not _looks_like_footnote_lexical(body.content))
+        if long_entries >= max(2, len(bodies) // 2):
+            return False
+
+    # Positive signals: require multiple strong indicators together (prefer omission over false positives).
     lexical_count = sum(1 for body in bodies if _looks_like_footnote_lexical(body.content))
     if lexical_count == 0:
         return False
-    if len(bodies) >= 6 and lexical_count <= 1:
+    short_entry_count = sum(1 for body in bodies if len(body.content.split()) <= 8)
+    first_top = min(body.bbox[1] for body in bodies)
+    block_bottom = max(body.bbox[3] for body in bodies)
+    compact_bottom_block = first_top >= page_height * 0.62 and (block_bottom - first_top) <= page_height * 0.33
+
+    smaller_than_body = False
+    if median_size > 0:
+        body_sizes = [
+            lines_by_top[idx][1].body_size
+            for idx in range(first_candidate_pos)
+            if lines_by_top[idx][1].top < first_top
+        ]
+        if body_sizes:
+            main_body_size = sorted(body_sizes)[len(body_sizes) // 2]
+            candidate_sizes = [line.body_size for _, line in lines_by_top[first_candidate_pos:]]
+            candidate_size = sorted(candidate_sizes)[len(candidate_sizes) // 2] if candidate_sizes else 0.0
+            smaller_than_body = candidate_size > 0 and candidate_size <= main_body_size * 0.95
+
+    vertical_gap = _has_vertical_gap(lines_by_top, first_candidate_pos)
+
+    positive_signals = 0
+    if lexical_count >= max(1, len(bodies) // 3):
+        positive_signals += 1
+    if short_entry_count >= max(1, len(bodies) // 2):
+        positive_signals += 1
+    if compact_bottom_block:
+        positive_signals += 1
+    if smaller_than_body:
+        positive_signals += 1
+    if vertical_gap:
+        positive_signals += 1
+
+    if positive_signals < 2:
+        return False
+
+    if len(bodies) >= 6 and lexical_count <= 1 and not smaller_than_body:
         return False
     return True
 

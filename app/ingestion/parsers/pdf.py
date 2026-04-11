@@ -56,6 +56,39 @@ def _normalize_match_line(line: str) -> str:
     return " ".join(line.split()).strip().lower()
 
 
+def _table_plain_rows(tables: list[list[list[str | None]]]) -> list[str]:
+    plain_rows: list[str] = []
+    for table in tables:
+        rows = _table_rows(table)
+        plain_rows.extend(" ".join(cell for cell in row if cell).strip() for row in rows)
+    return [row for row in plain_rows if row]
+
+
+def _dedupe_table_lines_from_body(page_text_lines: list[str], tables: list[list[list[str | None]]]) -> list[str]:
+    if not tables:
+        return page_text_lines
+    row_norms = {_normalize_match_line(row) for row in _table_plain_rows(tables)}
+    if not row_norms:
+        return page_text_lines
+    return [line for line in page_text_lines if _normalize_match_line(line) not in row_norms]
+
+
+def _table_line_indexes_in_visual_lines(
+    visual_lines: list[Any], tables: list[list[list[str | None]]]
+) -> set[int]:
+    if not tables:
+        return set()
+    row_norms = {_normalize_match_line(row) for row in _table_plain_rows(tables)}
+    if not row_norms:
+        return set()
+    matched: set[int] = set()
+    for idx, line in enumerate(visual_lines):
+        text = "".join(c.text for c in line.chars).strip()
+        if _normalize_match_line(text) in row_norms:
+            matched.add(idx)
+    return matched
+
+
 def _inject_tables_into_text_lines(page_text_lines: list[str], tables: list[list[list[str | None]]]) -> list[str]:
     if not tables:
         return page_text_lines
@@ -101,11 +134,17 @@ def _extract_structured_page_text_pdfplumber(page: Any, page_number: int) -> str
     page_text_lines: list[str] = []
     resolved_for_page = []
     unlinked_bodies = []
+    table_data = page.extract_tables() or []
     if chars:
         visual_lines = build_visual_lines(chars)
         anchors = detect_superscript_anchors(visual_lines)
         page_height = float(getattr(page, "height", 0.0) or 0.0)
-        footnote_bodies, footnote_line_indexes = detect_footnote_bodies(visual_lines, page_height=page_height)
+        table_line_indexes = _table_line_indexes_in_visual_lines(visual_lines, table_data)
+        footnote_bodies, footnote_line_indexes = detect_footnote_bodies(
+            visual_lines,
+            page_height=page_height,
+            excluded_line_indexes=table_line_indexes,
+        )
         resolved_for_page, unresolved, unlinked_bodies = link_anchors_to_bodies(anchors, footnote_bodies)
         reconstructed = reconstruct_page_text(
             visual_lines,
@@ -114,6 +153,7 @@ def _extract_structured_page_text_pdfplumber(page: Any, page_number: int) -> str
             footnote_line_indexes=footnote_line_indexes,
         )
         page_text_lines = reconstructed.lines
+        page_text_lines = _dedupe_table_lines_from_body(page_text_lines, table_data)
 
         if os.getenv("PDF_FOOTNOTE_DEBUG", "").lower() in {"1", "true", "yes"}:
             logger.debug(
@@ -159,7 +199,6 @@ def _extract_structured_page_text_pdfplumber(page: Any, page_number: int) -> str
                 if line:
                     page_text_lines.append(line)
 
-    table_data = page.extract_tables() or []
     lines.extend(_inject_tables_into_text_lines(page_text_lines, table_data))
 
     for footnote in resolved_for_page:
