@@ -359,13 +359,34 @@ def _line_starts_with_superscript_numeric_label(line: dict[str, Any]) -> bool:
 
 
 def _classify_bottom_region(page: Any, lines: list[dict[str, Any]]) -> dict[str, Any]:
-    if not lines:
+    def _result(
+        *,
+        classification: str,
+        reasons: list[str],
+        parsed_body_labels: list[str],
+        parsed_bodies: dict[str, str],
+        checks: dict[str, Any],
+    ) -> dict[str, Any]:
         return {
-            "classification": "unknown",
-            "reasons": ["no_bottom_lines_detected"],
-            "parsed_body_labels": [],
-            "parsed_bodies": {},
+            "classification": classification,
+            "reasons": reasons,
+            "parsed_body_labels": parsed_body_labels,
+            "parsed_bodies": parsed_bodies,
+            "detected_content": [
+                {"label": label, "content": parsed_bodies.get(label, "")}
+                for label in parsed_body_labels
+            ],
+            "checks": checks,
         }
+
+    if not lines:
+        return _result(
+            classification="unknown",
+            reasons=["no_bottom_lines_detected"],
+            parsed_body_labels=[],
+            parsed_bodies={},
+            checks={"passes_true_footnote_check": False},
+        )
 
     page_chars = list(getattr(page, "chars", []) or [])
     region_top = min(float(line["bbox"]["top"]) for line in lines)
@@ -384,6 +405,15 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]]) -> dict[str,
     footnote_candidate_lines = [line for line in lines if footnote_prefix.match(str(line["text"]))]
 
     reasons: list[str] = []
+    checks: dict[str, Any] = {
+        "table_negative": False,
+        "numbered_list_negative": False,
+        "body_sized_numbered_negative": False,
+        "parsed_ids_count": 0,
+        "superscript_label_present": False,
+        "small_text": False,
+        "passes_true_footnote_check": False,
+    }
 
     extracted_tables = page.extract_tables() or []
     if extracted_tables:
@@ -396,64 +426,77 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]]) -> dict[str,
                             table_token_count += 1
         if table_token_count >= 2:
             reasons.append("bottom_text_matches_extracted_table_cells")
-            return {
-                "classification": "table_region",
-                "reasons": reasons,
-                "parsed_body_labels": [],
-                "parsed_bodies": {},
-            }
+            checks["table_negative"] = True
+            return _result(
+                classification="table_region",
+                reasons=reasons,
+                parsed_body_labels=[],
+                parsed_bodies={},
+                checks=checks,
+            )
 
     if len(numbered_list_lines) >= 3 and len(footnote_candidate_lines) <= 1:
         reasons.append("multi_line_numbered_list_prefix_pattern")
-        return {
-            "classification": "ordinary_numbered_list",
-            "reasons": reasons,
-            "parsed_body_labels": [],
-            "parsed_bodies": {},
-        }
+        checks["numbered_list_negative"] = True
+        return _result(
+            classification="ordinary_numbered_list",
+            reasons=reasons,
+            parsed_body_labels=[],
+            parsed_bodies={},
+            checks=checks,
+        )
 
     if len(numbered_list_lines) >= 3 and line_size_median >= page_size_median * 0.95:
         reasons.append("numbered_lines_are_body_sized")
-        return {
-            "classification": "ordinary_numbered_list",
-            "reasons": reasons,
-            "parsed_body_labels": [],
-            "parsed_bodies": {},
-        }
+        checks["body_sized_numbered_negative"] = True
+        return _result(
+            classification="ordinary_numbered_list",
+            reasons=reasons,
+            parsed_body_labels=[],
+            parsed_bodies={},
+            checks=checks,
+        )
 
     parsed_bodies = _parse_footnote_bodies_from_lines(lines)
     parsed_labels = list(parsed_bodies.keys())
     parsed_ids = [int(label) for label in parsed_labels if label.isdigit()]
+    checks["parsed_ids_count"] = len(parsed_ids)
 
     # Ignore footer-only regions (e.g., isolated page numbers at far-right).
     if len(lines) <= 2 and len(parsed_ids) == 0:
         reasons.append("footer_or_page_number_only")
-        return {
-            "classification": "unknown",
-            "reasons": reasons,
-            "parsed_body_labels": [],
-            "parsed_bodies": {},
-        }
+        return _result(
+            classification="unknown",
+            reasons=reasons,
+            parsed_body_labels=[],
+            parsed_bodies={},
+            checks=checks,
+        )
 
     if len(parsed_ids) >= 1:
         small_text = line_size_median > 0 and page_size_median > 0 and line_size_median <= page_size_median * 0.9
         superscript_label_present = any(_line_starts_with_superscript_numeric_label(line) for line in footnote_candidate_lines)
+        checks["small_text"] = small_text
+        checks["superscript_label_present"] = superscript_label_present
         if superscript_label_present and small_text:
             reasons.extend(["superscript_numeric_label_prefix", "smaller_bottom_text"])
-            return {
-                "classification": "true_footnote_block",
-                "reasons": reasons,
-                "parsed_body_labels": parsed_labels,
-                "parsed_bodies": parsed_bodies,
-            }
+            checks["passes_true_footnote_check"] = True
+            return _result(
+                classification="true_footnote_block",
+                reasons=reasons,
+                parsed_body_labels=parsed_labels,
+                parsed_bodies=parsed_bodies,
+                checks=checks,
+            )
 
     reasons.append("insufficient_footnote_signals")
-    return {
-        "classification": "unknown",
-        "reasons": reasons,
-        "parsed_body_labels": [],
-        "parsed_bodies": {},
-    }
+    return _result(
+        classification="unknown",
+        reasons=reasons,
+        parsed_body_labels=parsed_labels,
+        parsed_bodies=parsed_bodies,
+        checks=checks,
+    )
 
 
 def _build_phase2_bottom_region_debug_for_page(page: Any, page_number: int) -> dict[str, Any]:
@@ -485,6 +528,8 @@ def _build_phase2_bottom_region_debug_for_page(page: Any, page_number: int) -> d
         "reasons_for_classification": classified["reasons"],
         "parsed_body_labels": classified["parsed_body_labels"],
         "parsed_bodies": classified["parsed_bodies"],
+        "detected_content": classified["detected_content"],
+        "checks": classified["checks"],
         "detected_footnotes": detected_footnotes,
     }
 

@@ -105,6 +105,8 @@ Phase 2 output is page-level JSON with:
 - `reasons_for_classification`
 - `parsed_body_labels` (only when `true_footnote_block`)
 - `parsed_bodies` (only when `true_footnote_block`)
+- `detected_content` (label/content pairs parsed from the region)
+- `checks` (pass/fail booleans for internal gating checks)
 - `detected_footnotes` with:
   - `anchor_number`
   - `footnote_content_page`
