@@ -50,7 +50,14 @@ Fix:
 1. Char-level anchors are detected in running prose/headings.
 2. Punctuation-adjacent anchors are detected (e.g., after period/comma/paren).
 3. Two-digit anchors are captured as a single id (`10`, `11`, etc.).
-4. URL-style reference rows like `2 http://...` are **ignored** as anchors in this phase.
+4. Superscript-like digits with whitespace/newline before them are excluded from anchor detection.
+5. Trailing superscripts attached to numeric tokens (for example patterns like `R80219` and `21.624`) are captured as suffix anchors when visually raised/smaller.
+
+## Investigation notes (for next phases)
+
+- Current Phase 1 anchor detection runs directly on `pdfplumber` page chars; it does **not** depend on chunking/structured-block heading removal.
+- Chapter/section title exclusion happens later in chunking, so headings are still visible to this debug step.
+- Keep cross-page cases in mind for linking (example: anchor on page N, body on page N+1 such as footnote 12 in the current test PDF).
 
 ## Scope boundary (important)
 
@@ -60,4 +67,3 @@ Phase 1 does **not**:
 - classify page-bottom regions,
 - strip or rewrite body text,
 - emit chunk-level footnote metadata.
-

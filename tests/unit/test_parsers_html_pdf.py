@@ -113,29 +113,37 @@ class PDFParserTests(unittest.TestCase):
         heading_anchor = [entry for entry in debug["detected_anchors"] if entry["anchor_id"] == "1"][0]
         self.assertTrue(heading_anchor["flags"]["heading_like"])
 
-    def test_phase1_ignores_url_reference_lines(self) -> None:
+    def test_phase1_ignores_superscript_when_preceded_by_space(self) -> None:
         class _FakePage:
             def __init__(self, chars: list[dict[str, object]]) -> None:
                 self.chars = chars
 
         chars = [
-            # "2 http://www."
+            # Leading superscript-like number with no inline token before it.
             {"text": "2", "x0": 10, "x1": 12, "top": 10, "bottom": 16, "doctop": 10, "size": 8},
             {"text": " ", "x0": 12, "x1": 14, "top": 15, "bottom": 25, "doctop": 15, "size": 11},
-            {"text": "h", "x0": 14, "x1": 18, "top": 15, "bottom": 25, "doctop": 15, "size": 11},
-            {"text": "t", "x0": 18, "x1": 20, "top": 15, "bottom": 25, "doctop": 15, "size": 11},
-            {"text": "t", "x0": 20, "x1": 22, "top": 15, "bottom": 25, "doctop": 15, "size": 11},
-            {"text": "p", "x0": 22, "x1": 26, "top": 15, "bottom": 25, "doctop": 15, "size": 11},
-            {"text": ":", "x0": 26, "x1": 27, "top": 15, "bottom": 25, "doctop": 15, "size": 11},
-            {"text": "/", "x0": 27, "x1": 28, "top": 15, "bottom": 25, "doctop": 15, "size": 11},
-            {"text": "/", "x0": 28, "x1": 29, "top": 15, "bottom": 25, "doctop": 15, "size": 11},
-            {"text": "w", "x0": 29, "x1": 33, "top": 15, "bottom": 25, "doctop": 15, "size": 11},
-            {"text": "w", "x0": 33, "x1": 37, "top": 15, "bottom": 25, "doctop": 15, "size": 11},
-            {"text": "w", "x0": 37, "x1": 41, "top": 15, "bottom": 25, "doctop": 15, "size": 11},
-            {"text": ".", "x0": 41, "x1": 42, "top": 15, "bottom": 25, "doctop": 15, "size": 11},
+            {"text": "A", "x0": 14, "x1": 18, "top": 15, "bottom": 25, "doctop": 15, "size": 11},
+            {"text": "B", "x0": 18, "x1": 22, "top": 15, "bottom": 25, "doctop": 15, "size": 11},
         ]
         debug = _build_anchor_debug_for_page(_FakePage(chars), page_number=7)
         self.assertEqual([], debug["detected_anchors"])
+
+    def test_phase1_extracts_trailing_superscript_from_long_digit_run(self) -> None:
+        class _FakePage:
+            def __init__(self, chars: list[dict[str, object]]) -> None:
+                self.chars = chars
+
+        chars = [
+            {"text": "R", "x0": 10, "x1": 14, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": "8", "x0": 14, "x1": 18, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": "0", "x0": 18, "x1": 22, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": "2", "x0": 22, "x1": 26, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": "1", "x0": 26, "x1": 28, "top": 14, "bottom": 20, "doctop": 14, "size": 8},
+            {"text": "9", "x0": 28, "x1": 30, "top": 14, "bottom": 20, "doctop": 14, "size": 8},
+        ]
+        debug = _build_anchor_debug_for_page(_FakePage(chars), page_number=31)
+        ids = [entry["anchor_id"] for entry in debug["detected_anchors"]]
+        self.assertIn("19", ids)
 
     def test_parse_pdf_file_uses_pdfplumber_primary_extraction(self) -> None:
         class _FakePage:

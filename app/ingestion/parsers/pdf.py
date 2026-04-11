@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import re
 from statistics import median
 from typing import Any
 
@@ -121,11 +120,6 @@ def _line_text(line_chars: list[dict[str, Any]]) -> str:
     return "".join(str(ch.get("text", "")) for ch in line_chars)
 
 
-def _is_url_reference_line(line_text: str) -> bool:
-    compact = " ".join(line_text.split()).strip().lower()
-    return bool(re.match(r"^\d{1,2}\s+(?:https?://|www\.)", compact))
-
-
 def _build_anchor_debug_for_page(page: Any, page_number: int) -> dict[str, Any]:
     chars = list(getattr(page, "chars", []) or [])
     lines = _group_page_chars_into_lines(chars)
@@ -141,8 +135,6 @@ def _build_anchor_debug_for_page(page: Any, page_number: int) -> dict[str, Any]:
         line_size_median = median(line_sizes)
         line_top_median = median(float(ch.get("doctop", ch.get("top", 0.0))) for ch in line_chars)
         line_text = _line_text(line_chars)
-        if _is_url_reference_line(line_text):
-            continue
         heading_like = line_text.strip().lower().startswith(heading_tokens)
 
         idx = 0
@@ -153,18 +145,37 @@ def _build_anchor_debug_for_page(page: Any, page_number: int) -> dict[str, Any]:
                 idx += 1
                 continue
 
-            anchor_chars = [ch]
+            run_chars = [ch]
             j = idx + 1
             while j < len(line_chars):
                 next_text = str(line_chars[j].get("text", ""))
                 if next_text.isdigit():
-                    anchor_chars.append(line_chars[j])
+                    run_chars.append(line_chars[j])
                     j += 1
                     continue
                 break
 
+            anchor_chars = list(run_chars)
+            if len(run_chars) > 2:
+                superscript_like = [
+                    (
+                        float(dch.get("size", line_size_median) or line_size_median) <= (line_size_median * 0.90)
+                        and float(dch.get("doctop", dch.get("top", line_top_median))) < (line_top_median - 0.6)
+                    )
+                    for dch in run_chars
+                ]
+                suffix_start = len(run_chars)
+                for pos in range(len(run_chars) - 1, -1, -1):
+                    if superscript_like[pos]:
+                        suffix_start = pos
+                    else:
+                        break
+                suffix_len = len(run_chars) - suffix_start
+                if 1 <= suffix_len <= 2 and suffix_start > 0:
+                    anchor_chars = run_chars[suffix_start:]
+
             anchor_id = "".join(str(ac.get("text", "")) for ac in anchor_chars)
-            if len(anchor_id) > 2:
+            if len(anchor_id) > 2 or len(anchor_id) == 0:
                 idx = j
                 continue
 
@@ -177,9 +188,14 @@ def _build_anchor_debug_for_page(page: Any, page_number: int) -> dict[str, Any]:
                 continue
 
             prev_char = line_chars[idx - 1] if idx > 0 else None
+            anchor_start_in_line = idx + (len(run_chars) - len(anchor_chars))
+            prev_char = line_chars[anchor_start_in_line - 1] if anchor_start_in_line > 0 else None
             next_char = line_chars[j] if j < len(line_chars) else None
             prev_text = str(prev_char.get("text", "")) if prev_char else ""
             next_text = str(next_char.get("text", "")) if next_char else ""
+            if not prev_char or prev_text.isspace():
+                idx = j
+                continue
             punctuation_adjacent = prev_text in {".", ",", ";", ":", ")", "]"} or next_text in {".", ",", ";", ":"}
             line_final = next_char is None or next_text.strip() == ""
 
@@ -190,8 +206,6 @@ def _build_anchor_debug_for_page(page: Any, page_number: int) -> dict[str, Any]:
                 confidence += 0.2
             if punctuation_adjacent:
                 confidence += 0.05
-            if heading_like:
-                confidence -= 0.1
             confidence = max(0.0, min(1.0, round(confidence, 2)))
 
             anchor_text_window = line_chars[max(0, idx - 12) : min(len(line_chars), j + 12)]
