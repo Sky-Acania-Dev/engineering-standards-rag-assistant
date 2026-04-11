@@ -18,17 +18,33 @@ class FootnoteBody:
 def detect_footnote_bodies(lines: list[LineInfo], page_height: float) -> tuple[list[FootnoteBody], set[int]]:
     if not lines:
         return [], set()
-    region_start = page_height * 0.72
-    region = [
-        (idx, line)
-        for idx, line in enumerate(lines)
-        if line.top >= region_start and line.body_size <= _page_body_size(lines) * 1.05
-    ]
-    if not region:
+
+    lines_by_top = sorted(enumerate(lines), key=lambda item: item[1].top)
+    median_size = _page_body_size(lines)
+    min_top = page_height * 0.55
+
+    first_candidate_pos: int | None = None
+    for pos, (idx, line) in enumerate(lines_by_top):
+        text = "".join(c.text for c in line.chars).strip()
+        if not text or line.top < min_top:
+            continue
+        if not re.match(r"^\d{1,3}[\).\-:]?\s+", text):
+            continue
+
+        size_ok = line.body_size <= median_size * 1.15 if median_size > 0 else True
+        lex_hint = _looks_like_footnote_lexical(text)
+        gap_hint = _has_vertical_gap(lines_by_top, pos)
+        if size_ok and (lex_hint or gap_hint):
+            first_candidate_pos = pos
+            break
+
+    if first_candidate_pos is None:
         return [], set()
 
+    region = lines_by_top[first_candidate_pos:]
     bodies: list[FootnoteBody] = []
     consumed_lines: set[int] = set()
+
     current_label: str | None = None
     current_text: list[str] = []
     current_bbox: tuple[float, float, float, float] | None = None
@@ -38,6 +54,7 @@ def detect_footnote_bodies(lines: list[LineInfo], page_height: float) -> tuple[l
         text = "".join(c.text for c in line.chars).strip()
         if not text:
             continue
+
         label_match = re.match(r"^(\d{1,3})[\).\-:]?\s+(.*)$", text)
         if label_match:
             if current_label and current_text:
@@ -55,7 +72,9 @@ def detect_footnote_bodies(lines: list[LineInfo], page_height: float) -> tuple[l
             current_text = [label_match.group(2).strip()]
             current_bbox = (min(c.x0 for c in line.chars), line.top, max(c.x1 for c in line.chars), line.bottom)
             current_lines = [idx]
-        elif current_label:
+            continue
+
+        if current_label is not None:
             current_text.append(text)
             left = min(c.x0 for c in line.chars)
             right = max(c.x1 for c in line.chars)
@@ -80,6 +99,26 @@ def detect_footnote_bodies(lines: list[LineInfo], page_height: float) -> tuple[l
         consumed_lines.update(current_lines)
 
     return bodies, consumed_lines
+
+
+def _has_vertical_gap(lines_by_top: list[tuple[int, LineInfo]], pos: int) -> bool:
+    if pos == 0:
+        return True
+    prev_line = lines_by_top[pos - 1][1]
+    line = lines_by_top[pos][1]
+    gap = max(0.0, line.top - prev_line.bottom)
+    return gap >= max(4.0, line.body_size * 1.1)
+
+
+def _looks_like_footnote_lexical(text: str) -> bool:
+    lowered = text.lower()
+    return (
+        "http://" in lowered
+        or "https://" in lowered
+        or "www." in lowered
+        or "code references" in lowered
+        or "found at:" in lowered
+    )
 
 
 def _page_body_size(lines: list[LineInfo]) -> float:

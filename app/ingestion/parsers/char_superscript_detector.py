@@ -61,7 +61,7 @@ def detect_superscript_anchors(lines: list[LineInfo]) -> list[AnchorCandidate]:
             is_small = run_size <= line.body_size * 0.9
             is_raised = run_bottom <= line.baseline - max(0.5, line.body_size * 0.12)
             tight_left = prev_gap <= max(2.0, line.body_size * 0.22)
-            separated_right = next_gap >= max(1.0, line.body_size * 0.15)
+            separated_right = next_gap >= -max(0.6, line.body_size * 0.08)
             if is_small and is_raised and tight_left and separated_right:
                 left = min(c.x0 for c in run)
                 top = min(c.top for c in run)

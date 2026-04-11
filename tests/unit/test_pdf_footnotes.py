@@ -81,6 +81,53 @@ class FootnotePipelineTests(unittest.TestCase):
         self.assertIn("10 degrees F", " ".join(page.lines))
         self.assertNotIn("102", " ".join(page.lines))
 
+
+    def test_realistic_same_size_footer_removed_and_metadata_attached(self) -> None:
+        class _FakePage:
+            images = []
+            height = 300.0
+
+            def __init__(self) -> None:
+                helper = FootnotePipelineTests()
+                self.chars = []
+                self.chars.extend(helper._chars_for_text("1.3 Qualifications and Workmanship", y_top=30.0, size=10.0, order_start=0))
+                body = helper._chars_for_text("If the nature of the work", y_top=80.0, size=10.0, order_start=100)
+                self.chars.extend(body)
+                self.chars.extend(helper._chars_for_text("1", y_top=77.0, size=7.0, x_start=body[-1].x1 + 0.4, order_start=200))
+                self.chars.extend(helper._chars_for_text("requires an individual to be licensed.", y_top=80.0, size=10.0, order_start=230, x_start=body[-1].x1 + 8.0))
+                self.chars.extend(helper._chars_for_text("1 Code references throughout this document are provided as guidance.", y_top=182.0, size=10.0, order_start=400))
+                self.chars.extend(helper._chars_for_text("All code references are to the 2009 IRC found at: https://example.org/ref", y_top=194.0, size=10.0, order_start=520))
+
+            def extract_text(self) -> str:
+                return ""
+
+            def extract_tables(self):
+                return []
+
+        class _FakeDoc:
+            pages = [_FakePage()]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return None
+
+        class _FakePdfPlumber:
+            @staticmethod
+            def open(_: str):
+                return _FakeDoc()
+
+        with patch("app.ingestion.parsers.pdf._require_pdfplumber", return_value=_FakePdfPlumber):
+            parsed = parse_pdf_file("dummy.pdf")
+
+        chunks = chunk_document_by_section(parsed)
+        body_chunks = [c for c in chunks if c.content_type == "body_text"]
+        merged = "\n".join(c.text for c in body_chunks)
+        self.assertIn("[fn:1]", merged)
+        self.assertNotIn("Code references throughout this document", merged)
+        self.assertTrue(any(any(note.id == "1" for note in c.footnotes) for c in body_chunks))
+
     def test_parser_and_chunk_metadata_include_resolved_footnotes(self) -> None:
         class _FakePage:
             images = []
