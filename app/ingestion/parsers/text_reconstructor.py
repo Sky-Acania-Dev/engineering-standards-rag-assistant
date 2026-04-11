@@ -20,31 +20,32 @@ def reconstruct_page_text(
     unresolved: list[AnchorCandidate],
     footnote_line_indexes: set[int],
 ) -> ReconstructedPage:
-    resolved_by_order: dict[int, str] = {}
+    marker_by_order: dict[int, str] = {}
     unresolved_orders: set[int] = set()
+
     for anchor in unresolved:
         unresolved_orders.update(anchor.char_orders)
     for item in resolved:
-        marker = f"[fn:{item.label}]"
+        marker = f"[footnote: {item.label}]"
         for line in lines:
             for char in line.chars:
                 if _in_bbox(char, item.anchor_bbox):
-                    resolved_by_order[char.order] = marker
+                    marker_by_order[char.order] = marker
 
     rendered: list[str] = []
     for idx, line in enumerate(lines):
         if idx in footnote_line_indexes:
             continue
         parts: list[str] = []
-        inserted_for_line: set[str] = set()
+        inserted_markers: set[str] = set()
         for char in line.chars:
             if char.order in unresolved_orders:
                 continue
-            marker = resolved_by_order.get(char.order)
+            marker = marker_by_order.get(char.order)
             if marker:
-                if marker not in inserted_for_line:
+                if marker not in inserted_markers:
                     parts.append(marker)
-                    inserted_for_line.add(marker)
+                    inserted_markers.add(marker)
                 continue
             parts.append(char.text)
         text = "".join(parts).strip()

@@ -21,42 +21,35 @@ def detect_footnote_bodies(lines: list[LineInfo], page_height: float) -> tuple[l
 
     lines_by_top = sorted(enumerate(lines), key=lambda item: item[1].top)
     median_size = _page_body_size(lines)
-    min_top = page_height * 0.55
+    min_top = page_height * 0.52
 
     first_candidate_pos: int | None = None
-    for pos, (idx, line) in enumerate(lines_by_top):
+    for pos, (_, line) in enumerate(lines_by_top):
         text = "".join(c.text for c in line.chars).strip()
-        if not text or line.top < min_top:
+        parsed = _parse_label_line(text)
+        if not parsed or line.top < min_top:
             continue
-        if not re.match(r"^\d{1,3}[\).\-:]?\s+", text):
-            continue
-
-        size_ok = line.body_size <= median_size * 1.15 if median_size > 0 else True
-        lex_hint = _looks_like_footnote_lexical(text)
-        gap_hint = _has_vertical_gap(lines_by_top, pos)
-        if size_ok and (lex_hint or gap_hint):
+        size_ok = line.body_size <= median_size * 1.2 if median_size > 0 else True
+        if size_ok and (_looks_like_footnote_lexical(text) or _has_vertical_gap(lines_by_top, pos)):
             first_candidate_pos = pos
             break
-
     if first_candidate_pos is None:
         return [], set()
 
-    region = lines_by_top[first_candidate_pos:]
     bodies: list[FootnoteBody] = []
     consumed_lines: set[int] = set()
-
     current_label: str | None = None
     current_text: list[str] = []
     current_bbox: tuple[float, float, float, float] | None = None
     current_lines: list[int] = []
 
-    for idx, line in region:
+    for idx, line in lines_by_top[first_candidate_pos:]:
         text = "".join(c.text for c in line.chars).strip()
         if not text:
             continue
-
-        label_match = re.match(r"^(\d{1,3})[\).\-:]?\s+(.*)$", text)
-        if label_match:
+        parsed = _parse_label_line(text)
+        if parsed:
+            label, remainder = parsed
             if current_label and current_text:
                 bodies.append(
                     FootnoteBody(
@@ -68,8 +61,8 @@ def detect_footnote_bodies(lines: list[LineInfo], page_height: float) -> tuple[l
                     )
                 )
                 consumed_lines.update(current_lines)
-            current_label = label_match.group(1)
-            current_text = [label_match.group(2).strip()]
+            current_label = label
+            current_text = [remainder]
             current_bbox = (min(c.x0 for c in line.chars), line.top, max(c.x1 for c in line.chars), line.bottom)
             current_lines = [idx]
             continue
@@ -98,7 +91,27 @@ def detect_footnote_bodies(lines: list[LineInfo], page_height: float) -> tuple[l
         )
         consumed_lines.update(current_lines)
 
-    return bodies, consumed_lines
+    deduped: dict[str, FootnoteBody] = {}
+    for body in bodies:
+        if body.label not in deduped:
+            deduped[body.label] = body
+    ordered = sorted(deduped.values(), key=lambda b: int(b.label))
+    return ordered, consumed_lines
+
+
+def _parse_label_line(text: str) -> tuple[str, str] | None:
+    compact = text.strip()
+    if not compact:
+        return None
+    spaced = re.match(r"^(\d(?:\s+\d){0,2})[\).\-:]?\s+(.*)$", compact)
+    if spaced:
+        label = spaced.group(1).replace(" ", "")
+        if label.isdigit():
+            return str(int(label)), spaced.group(2).strip()
+    simple = re.match(r"^(\d{1,3})[\).\-:]?\s+(.*)$", compact)
+    if simple:
+        return str(int(simple.group(1))), simple.group(2).strip()
+    return None
 
 
 def _has_vertical_gap(lines_by_top: list[tuple[int, LineInfo]], pos: int) -> bool:
@@ -107,7 +120,7 @@ def _has_vertical_gap(lines_by_top: list[tuple[int, LineInfo]], pos: int) -> boo
     prev_line = lines_by_top[pos - 1][1]
     line = lines_by_top[pos][1]
     gap = max(0.0, line.top - prev_line.bottom)
-    return gap >= max(4.0, line.body_size * 1.1)
+    return gap >= max(4.0, line.body_size * 1.05)
 
 
 def _looks_like_footnote_lexical(text: str) -> bool:

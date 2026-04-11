@@ -91,12 +91,13 @@ def _extract_structured_page_text_pdfplumber(page: Any, page_number: int) -> str
     chars = extract_page_chars(page, page_number)
     page_text_lines: list[str] = []
     resolved_for_page = []
+    unlinked_bodies = []
     if chars:
         visual_lines = build_visual_lines(chars)
         anchors = detect_superscript_anchors(visual_lines)
         page_height = float(getattr(page, "height", 0.0) or 0.0)
         footnote_bodies, footnote_line_indexes = detect_footnote_bodies(visual_lines, page_height=page_height)
-        resolved_for_page, unresolved = link_anchors_to_bodies(anchors, footnote_bodies)
+        resolved_for_page, unresolved, unlinked_bodies = link_anchors_to_bodies(anchors, footnote_bodies)
         reconstructed = reconstruct_page_text(
             visual_lines,
             resolved=resolved_for_page,
@@ -127,6 +128,9 @@ def _extract_structured_page_text_pdfplumber(page: Any, page_number: int) -> str
 
     for footnote in resolved_for_page:
         serialized = f"[FNDEF page={page_number} id={footnote.label} anchor={footnote.anchor_text}] {footnote.content}"
+        lines.append(serialized)
+    for footnote in unlinked_bodies:
+        serialized = f"[FNUNLINK page={page_number} id={footnote.label} reason={footnote.debug_reason}] {footnote.content}"
         lines.append(serialized)
 
     image_count = len(getattr(page, "images", []) or [])

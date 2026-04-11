@@ -16,10 +16,20 @@ class ResolvedFootnote:
     footnote_bbox: tuple[float, float, float, float]
 
 
+@dataclass(frozen=True)
+class UnlinkedFootnote:
+    page_number: int
+    label: str
+    content: str
+    footnote_bbox: tuple[float, float, float, float]
+    debug_status: str = "unlinked_recognized"
+    debug_reason: str = "page_footer_footnote_detected_without_anchor"
+
+
 def link_anchors_to_bodies(
     anchors: list[AnchorCandidate],
     bodies: list[FootnoteBody],
-) -> tuple[list[ResolvedFootnote], list[AnchorCandidate]]:
+) -> tuple[list[ResolvedFootnote], list[AnchorCandidate], list[UnlinkedFootnote]]:
     by_label: dict[str, list[FootnoteBody]] = {}
     for body in bodies:
         by_label.setdefault(body.label, []).append(body)
@@ -50,4 +60,14 @@ def link_anchors_to_bodies(
             )
         )
 
-    return resolved, unresolved
+    unlinked = [
+        UnlinkedFootnote(
+            page_number=body.page_number,
+            label=body.label,
+            content=body.content,
+            footnote_bbox=body.bbox,
+        )
+        for body in bodies
+        if (body.page_number, body.label) not in used_body_ids
+    ]
+    return resolved, unresolved, unlinked
