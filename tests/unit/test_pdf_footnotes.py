@@ -25,6 +25,13 @@ class FootnotePipelineTests(unittest.TestCase):
         return chars
 
 
+
+    def test_footer_detection_not_limited_to_extreme_bottom(self) -> None:
+        chars = self._chars_for_text("1 Code references throughout this document", y_top=130.0, size=8.0, order_start=0)
+        lines = build_visual_lines(chars)
+        bodies, _ = detect_footnote_bodies(lines, page_height=300.0)
+        self.assertEqual("1", bodies[0].label)
+
     def test_leading_label_parsing_for_url_line(self) -> None:
         line = self._chars_for_text("2 http://example.com/x", y_top=220.0, size=8.0, order_start=0)
         lines = build_visual_lines(line)
