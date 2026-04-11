@@ -5,6 +5,7 @@ This guide explains how to run the Phase 1 superscript-anchor debug extractor an
 ## Script
 
 - `scripts/footnote_phase1_debug.py`
+- `scripts/footnote_title_anchor_debug.py` (targeted title-marker diagnostics for `...Requirements1` and `...Foundations9`)
 
 The script reads a PDF and writes page-level JSON debug output using:
 
@@ -34,6 +35,21 @@ python .\scripts\footnote_phase1_debug.py $pdfPath --out $outPath
 If you omit `--out`, output defaults to:
 
 - `<input_pdf>.phase1_anchors.json`
+
+## Targeted Chapter Title Diagnostics
+
+To inspect why chapter-title markers (`1` and `9`) are accepted/rejected:
+
+```powershell
+python .\scripts\footnote_title_anchor_debug.py $pdfPath
+```
+
+This script prints, for the title-line digit candidates:
+
+- digit size/top vs line medians,
+- `is_smaller` and `is_raised` checks,
+- the title text,
+- and preceding character details.
 
 ## Common error: `No module named app`
 
