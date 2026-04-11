@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from statistics import median
 from typing import Any
 
 
@@ -93,6 +94,179 @@ def _extract_structured_page_text_pdfplumber(page: Any, page_number: int) -> str
         lines.append(f"[IMAGES] {image_count} embedded image(s)")
 
     return "\n".join(lines)
+
+
+def _group_page_chars_into_lines(chars: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    if not chars:
+        return []
+    sorted_chars = sorted(chars, key=lambda c: (float(c.get("doctop", c.get("top", 0.0))), float(c.get("x0", 0.0))))
+    lines: list[list[dict[str, Any]]] = []
+    y_tolerance = 8.0
+    for ch in sorted_chars:
+        ch_top = float(ch.get("doctop", ch.get("top", 0.0)))
+        if not lines:
+            lines.append([ch])
+            continue
+        last_line = lines[-1]
+        last_top = median(float(item.get("doctop", item.get("top", 0.0))) for item in last_line)
+        if abs(ch_top - last_top) <= y_tolerance:
+            last_line.append(ch)
+        else:
+            lines.append([ch])
+    return [sorted(line, key=lambda c: float(c.get("x0", 0.0))) for line in lines]
+
+
+def _line_text(line_chars: list[dict[str, Any]]) -> str:
+    return "".join(str(ch.get("text", "")) for ch in line_chars)
+
+
+def _superscript_geometry(
+    *,
+    char_size: float,
+    char_top: float,
+    line_size_median: float,
+    line_top_median: float,
+) -> tuple[bool, bool]:
+    is_smaller = char_size <= (line_size_median * 0.84)
+    top_delta = line_top_median - char_top
+    # Some PDFs encode superscripts with smaller size but near-equal (or slightly
+    # lower) `top` values due to glyph metrics. Allow a tight near-baseline window
+    # when the size reduction is strong.
+    is_raised = top_delta >= 0.35 or (is_smaller and abs(top_delta) <= 0.55)
+    return is_smaller, is_raised
+
+
+def _build_anchor_debug_for_page(page: Any, page_number: int) -> dict[str, Any]:
+    chars = list(getattr(page, "chars", []) or [])
+    lines = _group_page_chars_into_lines(chars)
+    detected_anchors: list[dict[str, Any]] = []
+    heading_tokens = ("chapter ", "section ", "appendix ", "article ")
+
+    for line_index, line_chars in enumerate(lines):
+        if not line_chars:
+            continue
+        line_sizes = [float(ch.get("size", 0.0) or 0.0) for ch in line_chars if float(ch.get("size", 0.0) or 0.0) > 0]
+        if not line_sizes:
+            continue
+        line_size_median = median(line_sizes)
+        line_top_median = median(float(ch.get("doctop", ch.get("top", 0.0))) for ch in line_chars)
+        line_text = _line_text(line_chars)
+        heading_like = line_text.strip().lower().startswith(heading_tokens)
+
+        idx = 0
+        while idx < len(line_chars):
+            ch = line_chars[idx]
+            text = str(ch.get("text", ""))
+            if not text.isdigit():
+                idx += 1
+                continue
+
+            run_chars = [ch]
+            j = idx + 1
+            while j < len(line_chars):
+                next_text = str(line_chars[j].get("text", ""))
+                if next_text.isdigit():
+                    run_chars.append(line_chars[j])
+                    j += 1
+                    continue
+                break
+
+            anchor_chars = list(run_chars)
+            if len(run_chars) > 2:
+                superscript_like = [
+                    (
+                        lambda geom: geom[0] and geom[1]
+                    )(
+                        _superscript_geometry(
+                            char_size=float(dch.get("size", line_size_median) or line_size_median),
+                            char_top=float(dch.get("doctop", dch.get("top", line_top_median))),
+                            line_size_median=line_size_median,
+                            line_top_median=line_top_median,
+                        )
+                    )
+                    for dch in run_chars
+                ]
+                suffix_start = len(run_chars)
+                for pos in range(len(run_chars) - 1, -1, -1):
+                    if superscript_like[pos]:
+                        suffix_start = pos
+                    else:
+                        break
+                suffix_len = len(run_chars) - suffix_start
+                if 1 <= suffix_len <= 2 and suffix_start > 0:
+                    anchor_chars = run_chars[suffix_start:]
+
+            anchor_id = "".join(str(ac.get("text", "")) for ac in anchor_chars)
+            if len(anchor_id) > 2 or len(anchor_id) == 0:
+                idx = j
+                continue
+
+            anchor_size_median = median(float(ac.get("size", line_size_median) or line_size_median) for ac in anchor_chars)
+            anchor_top_median = median(float(ac.get("doctop", ac.get("top", line_top_median))) for ac in anchor_chars)
+            is_smaller, is_raised = _superscript_geometry(
+                char_size=anchor_size_median,
+                char_top=anchor_top_median,
+                line_size_median=line_size_median,
+                line_top_median=line_top_median,
+            )
+            if not (is_smaller and is_raised):
+                idx = j
+                continue
+
+            prev_char = line_chars[idx - 1] if idx > 0 else None
+            anchor_start_in_line = idx + (len(run_chars) - len(anchor_chars))
+            prev_char = line_chars[anchor_start_in_line - 1] if anchor_start_in_line > 0 else None
+            next_char = line_chars[j] if j < len(line_chars) else None
+            prev_text = str(prev_char.get("text", "")) if prev_char else ""
+            next_text = str(next_char.get("text", "")) if next_char else ""
+            if not prev_char or prev_text.isspace():
+                idx = j
+                continue
+            punctuation_adjacent = prev_text in {".", ",", ";", ":", ")", "]"} or next_text in {".", ",", ";", ":"}
+            line_final = next_char is None or next_text.strip() == ""
+
+            confidence = 0.55
+            if is_smaller:
+                confidence += 0.2
+            if is_raised:
+                confidence += 0.2
+            if punctuation_adjacent:
+                confidence += 0.05
+            confidence = max(0.0, min(1.0, round(confidence, 2)))
+
+            anchor_text_window = line_chars[max(0, idx - 12) : min(len(line_chars), j + 12)]
+            nearby_text = _line_text(anchor_text_window).strip()
+            detected_anchors.append(
+                {
+                    "anchor_id": anchor_id,
+                    "bbox": {
+                        "x0": float(anchor_chars[0].get("x0", 0.0)),
+                        "top": float(min(float(ac.get("top", 0.0)) for ac in anchor_chars)),
+                        "x1": float(anchor_chars[-1].get("x1", anchor_chars[-1].get("x0", 0.0))),
+                        "bottom": float(max(float(ac.get("bottom", 0.0)) for ac in anchor_chars)),
+                    },
+                    "line_index": line_index,
+                    "nearby_anchor_text": nearby_text,
+                    "confidence": confidence,
+                    "flags": {
+                        "line_final": line_final,
+                        "punctuation_adjacent": punctuation_adjacent,
+                        "heading_like": heading_like,
+                    },
+                }
+            )
+            idx = j
+    return {"page": page_number, "detected_anchors": detected_anchors}
+
+
+def extract_phase1_superscript_anchor_debug(pdf_path: str | Path) -> list[dict[str, Any]]:
+    """Phase 1 debug helper: char-level superscript anchor detection only."""
+    pdfplumber = _require_pdfplumber()
+    with pdfplumber.open(str(pdf_path)) as doc:
+        return [
+            _build_anchor_debug_for_page(page, i)
+            for i, page in enumerate(doc.pages, start=1)
+        ]
 
 
 def _extract_structured_page_text_pypdf(page: Any, page_number: int) -> str:

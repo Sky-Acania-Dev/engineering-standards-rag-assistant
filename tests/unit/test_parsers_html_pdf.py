@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.ingestion.parsers.html import ingest_html_folder, parse_html_content
-from app.ingestion.parsers.pdf import parse_pdf_file
+from app.ingestion.parsers.pdf import _build_anchor_debug_for_page, parse_pdf_file
 
 
 class HTMLParserTests(unittest.TestCase):
@@ -48,6 +48,137 @@ class HTMLParserTests(unittest.TestCase):
 
 
 class PDFParserTests(unittest.TestCase):
+    def test_phase1_detects_heading_and_punctuation_superscript_anchors(self) -> None:
+        class _FakePage:
+            def __init__(self, chars: list[dict[str, object]]) -> None:
+                self.chars = chars
+
+        chars = [
+            # "Chapter 1: Foundations" + superscript 1
+            {"text": "C", "x0": 10, "x1": 14, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": "h", "x0": 14, "x1": 18, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": "a", "x0": 18, "x1": 22, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": "p", "x0": 22, "x1": 26, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": "t", "x0": 26, "x1": 30, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": "e", "x0": 30, "x1": 34, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": "r", "x0": 34, "x1": 38, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": " ", "x0": 38, "x1": 40, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": "1", "x0": 40, "x1": 44, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": ":", "x0": 44, "x1": 46, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": " ", "x0": 46, "x1": 48, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": "F", "x0": 48, "x1": 52, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": "o", "x0": 52, "x1": 56, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": "u", "x0": 56, "x1": 60, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": "n", "x0": 60, "x1": 64, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": "d", "x0": 64, "x1": 68, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": "a", "x0": 68, "x1": 72, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": "t", "x0": 72, "x1": 76, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": "i", "x0": 76, "x1": 80, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": "o", "x0": 80, "x1": 84, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": "n", "x0": 84, "x1": 88, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": "s", "x0": 88, "x1": 92, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": "1", "x0": 93, "x1": 95, "top": 14, "bottom": 20, "doctop": 14, "size": 8},
+            # "40 CFR Part 745." + superscript 2
+            {"text": "4", "x0": 10, "x1": 14, "top": 50, "bottom": 60, "doctop": 50, "size": 12},
+            {"text": "0", "x0": 14, "x1": 18, "top": 50, "bottom": 60, "doctop": 50, "size": 12},
+            {"text": " ", "x0": 18, "x1": 20, "top": 50, "bottom": 60, "doctop": 50, "size": 12},
+            {"text": "C", "x0": 20, "x1": 24, "top": 50, "bottom": 60, "doctop": 50, "size": 12},
+            {"text": "F", "x0": 24, "x1": 28, "top": 50, "bottom": 60, "doctop": 50, "size": 12},
+            {"text": "R", "x0": 28, "x1": 32, "top": 50, "bottom": 60, "doctop": 50, "size": 12},
+            {"text": " ", "x0": 32, "x1": 34, "top": 50, "bottom": 60, "doctop": 50, "size": 12},
+            {"text": "P", "x0": 34, "x1": 38, "top": 50, "bottom": 60, "doctop": 50, "size": 12},
+            {"text": "a", "x0": 38, "x1": 42, "top": 50, "bottom": 60, "doctop": 50, "size": 12},
+            {"text": "r", "x0": 42, "x1": 46, "top": 50, "bottom": 60, "doctop": 50, "size": 12},
+            {"text": "t", "x0": 46, "x1": 50, "top": 50, "bottom": 60, "doctop": 50, "size": 12},
+            {"text": " ", "x0": 50, "x1": 52, "top": 50, "bottom": 60, "doctop": 50, "size": 12},
+            {"text": "7", "x0": 52, "x1": 56, "top": 50, "bottom": 60, "doctop": 50, "size": 12},
+            {"text": "4", "x0": 56, "x1": 60, "top": 50, "bottom": 60, "doctop": 50, "size": 12},
+            {"text": "5", "x0": 60, "x1": 64, "top": 50, "bottom": 60, "doctop": 50, "size": 12},
+            {"text": ".", "x0": 64, "x1": 66, "top": 50, "bottom": 60, "doctop": 50, "size": 12},
+            {"text": "2", "x0": 67, "x1": 69, "top": 44, "bottom": 50, "doctop": 44, "size": 8},
+            # two-digit anchor 10
+            {"text": "R", "x0": 10, "x1": 14, "top": 80, "bottom": 90, "doctop": 80, "size": 12},
+            {"text": "e", "x0": 14, "x1": 18, "top": 80, "bottom": 90, "doctop": 80, "size": 12},
+            {"text": "f", "x0": 18, "x1": 22, "top": 80, "bottom": 90, "doctop": 80, "size": 12},
+            {"text": "1", "x0": 23, "x1": 25, "top": 74, "bottom": 80, "doctop": 74, "size": 8},
+            {"text": "0", "x0": 25, "x1": 27, "top": 74, "bottom": 80, "doctop": 74, "size": 8},
+        ]
+        debug = _build_anchor_debug_for_page(_FakePage(chars), page_number=5)
+        ids = [entry["anchor_id"] for entry in debug["detected_anchors"]]
+        self.assertIn("1", ids)
+        self.assertIn("2", ids)
+        self.assertIn("10", ids)
+        punctuation_anchor = [entry for entry in debug["detected_anchors"] if entry["anchor_id"] == "2"][0]
+        self.assertTrue(punctuation_anchor["flags"]["punctuation_adjacent"])
+        heading_anchor = [entry for entry in debug["detected_anchors"] if entry["anchor_id"] == "1"][0]
+        self.assertTrue(heading_anchor["flags"]["heading_like"])
+
+    def test_phase1_ignores_superscript_when_preceded_by_space(self) -> None:
+        class _FakePage:
+            def __init__(self, chars: list[dict[str, object]]) -> None:
+                self.chars = chars
+
+        chars = [
+            # Leading superscript-like number with no inline token before it.
+            {"text": "2", "x0": 10, "x1": 12, "top": 10, "bottom": 16, "doctop": 10, "size": 8},
+            {"text": " ", "x0": 12, "x1": 14, "top": 15, "bottom": 25, "doctop": 15, "size": 11},
+            {"text": "A", "x0": 14, "x1": 18, "top": 15, "bottom": 25, "doctop": 15, "size": 11},
+            {"text": "B", "x0": 18, "x1": 22, "top": 15, "bottom": 25, "doctop": 15, "size": 11},
+        ]
+        debug = _build_anchor_debug_for_page(_FakePage(chars), page_number=7)
+        self.assertEqual([], debug["detected_anchors"])
+
+    def test_phase1_extracts_trailing_superscript_from_long_digit_run(self) -> None:
+        class _FakePage:
+            def __init__(self, chars: list[dict[str, object]]) -> None:
+                self.chars = chars
+
+        chars = [
+            {"text": "R", "x0": 10, "x1": 14, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": "8", "x0": 14, "x1": 18, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": "0", "x0": 18, "x1": 22, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": "2", "x0": 22, "x1": 26, "top": 20, "bottom": 30, "doctop": 20, "size": 12},
+            {"text": "1", "x0": 26, "x1": 28, "top": 14, "bottom": 20, "doctop": 14, "size": 8},
+            {"text": "9", "x0": 28, "x1": 30, "top": 14, "bottom": 20, "doctop": 14, "size": 8},
+        ]
+        debug = _build_anchor_debug_for_page(_FakePage(chars), page_number=31)
+        ids = [entry["anchor_id"] for entry in debug["detected_anchors"]]
+        self.assertIn("19", ids)
+
+    def test_phase1_accepts_title_superscript_with_near_baseline_top(self) -> None:
+        class _FakePage:
+            def __init__(self, chars: list[dict[str, object]]) -> None:
+                self.chars = chars
+
+        chars = [
+            {"text": "C", "x0": 10, "x1": 14, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "h", "x0": 14, "x1": 18, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "a", "x0": 18, "x1": 22, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "p", "x0": 22, "x1": 26, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "t", "x0": 26, "x1": 30, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "e", "x0": 30, "x1": 34, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "r", "x0": 34, "x1": 38, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": " ", "x0": 38, "x1": 40, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "3", "x0": 40, "x1": 44, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": ":", "x0": 44, "x1": 46, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": " ", "x0": 46, "x1": 48, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "F", "x0": 48, "x1": 52, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "o", "x0": 52, "x1": 56, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "u", "x0": 56, "x1": 60, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "n", "x0": 60, "x1": 64, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "d", "x0": 64, "x1": 68, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "a", "x0": 68, "x1": 72, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "t", "x0": 72, "x1": 76, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "i", "x0": 76, "x1": 80, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "o", "x0": 80, "x1": 84, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "n", "x0": 84, "x1": 88, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "s", "x0": 88, "x1": 92, "top": 100, "bottom": 112, "doctop": 100, "size": 14},
+            {"text": "9", "x0": 93, "x1": 95, "top": 100.44, "bottom": 106.44, "doctop": 100.44, "size": 9},
+        ]
+        debug = _build_anchor_debug_for_page(_FakePage(chars), page_number=13)
+        ids = [entry["anchor_id"] for entry in debug["detected_anchors"]]
+        self.assertIn("9", ids)
+
     def test_parse_pdf_file_uses_pdfplumber_primary_extraction(self) -> None:
         class _FakePage:
             images = []
