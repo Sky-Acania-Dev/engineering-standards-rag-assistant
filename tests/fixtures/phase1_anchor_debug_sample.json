@@ -1,0 +1,22 @@
+{
+  "page": 5,
+  "detected_anchors": [
+    {
+      "anchor_id": "1",
+      "bbox": {
+        "x0": 25.0,
+        "top": 14.0,
+        "x1": 27.0,
+        "bottom": 20.0
+      },
+      "line_index": 0,
+      "nearby_anchor_text": "Title1",
+      "confidence": 0.95,
+      "flags": {
+        "line_final": true,
+        "punctuation_adjacent": false,
+        "heading_like": false
+      }
+    }
+  ]
+}
