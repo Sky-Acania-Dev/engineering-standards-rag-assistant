@@ -29,8 +29,8 @@ class FootnotePipelineTests(unittest.TestCase):
 
     def test_first_footer_body_not_dropped(self) -> None:
         chars = []
-        chars.extend(self._chars_for_text("1 first note", y_top=110.0, size=9.0, order_start=0))
-        chars.extend(self._chars_for_text("2 second note", y_top=124.0, size=9.0, order_start=80))
+        chars.extend(self._chars_for_text("1 http://example.com/one", y_top=130.0, size=9.0, order_start=0))
+        chars.extend(self._chars_for_text("2 http://example.com/two", y_top=144.0, size=9.0, order_start=80))
         lines = build_visual_lines(chars)
         bodies, _ = detect_footnote_bodies(lines, page_height=300.0)
         self.assertEqual(["1", "2"], [b.label for b in bodies])
@@ -55,6 +55,24 @@ class FootnotePipelineTests(unittest.TestCase):
         self.assertEqual("2", bodies[0].label)
         self.assertTrue(bodies[0].content.startswith("http://"))
 
+
+    def test_numbered_list_near_bottom_not_footnote_block(self) -> None:
+        chars = []
+        chars.extend(self._chars_for_text("1 General requirement", y_top=190.0, size=10.0, order_start=0))
+        chars.extend(self._chars_for_text("2 Installer shall verify", y_top=204.0, size=10.0, order_start=60))
+        chars.extend(self._chars_for_text("3 Contractor must comply", y_top=218.0, size=10.0, order_start=140))
+        lines = build_visual_lines(chars)
+        bodies, _ = detect_footnote_bodies(lines, page_height=300.0)
+        self.assertEqual([], bodies)
+
+    def test_table_rows_not_classified_as_footnotes(self) -> None:
+        chars = []
+        chars.extend(self._chars_for_text("1  0.63  0.94", y_top=220.0, size=9.0, order_start=0))
+        chars.extend(self._chars_for_text("2  0.61  0.93", y_top=234.0, size=9.0, order_start=40))
+        lines = build_visual_lines(chars)
+        bodies, _ = detect_footnote_bodies(lines, page_height=300.0)
+        self.assertEqual([], bodies)
+
     def test_footer_filtering_excludes_page_artifacts(self) -> None:
         lines = build_visual_lines(
             self._chars_for_text("6 | Page", y_top=286.0, size=8.0, order_start=0)
@@ -69,7 +87,7 @@ class FootnotePipelineTests(unittest.TestCase):
     def test_large_heading_font_anchor_detection(self) -> None:
         title = self._chars_for_text("Chapter 1 Administration", y_top=20.0, size=16.0, order_start=0)
         sup = self._chars_for_text("1", y_top=16.5, size=14.5, x_start=title[-1].x1 + 0.3, order_start=120)
-        body = self._chars_for_text("1 heading footnote body", y_top=220.0, size=8.0, order_start=220)
+        body = self._chars_for_text("1 http://example.com/heading-footnote-body", y_top=220.0, size=8.0, order_start=220)
         lines = build_visual_lines(title + sup + body)
         anchors = detect_superscript_anchors(lines)
         self.assertTrue(any(a.label == "1" for a in anchors))
@@ -77,7 +95,7 @@ class FootnotePipelineTests(unittest.TestCase):
     def test_period_adjacent_745_anchor_detected(self) -> None:
         line = self._chars_for_text("40 CFR Part 745.", y_top=40.0, size=10.0, order_start=0)
         sup = self._chars_for_text("2", y_top=37.5, size=8.5, x_start=line[-1].x1 + 0.2, order_start=200)
-        footer = self._chars_for_text("2 url-two", y_top=220.0, size=8.0, order_start=300)
+        footer = self._chars_for_text("2 http://example.com/two", y_top=220.0, size=8.0, order_start=300)
         lines = build_visual_lines(line + sup + footer)
         anchors = detect_superscript_anchors(lines)
         bodies, idx = detect_footnote_bodies(lines, page_height=300.0)
@@ -88,7 +106,7 @@ class FootnotePipelineTests(unittest.TestCase):
     def test_line_final_anchor_detected(self) -> None:
         body = self._chars_for_text("Section R802", y_top=40.0, size=10.0, order_start=0)
         sup = self._chars_for_text("19", y_top=37.0, size=7.0, x_start=body[-1].x1 + 0.4, order_start=100)
-        footer = self._chars_for_text("19 line-final footnote", y_top=220.0, size=8.0, order_start=200)
+        footer = self._chars_for_text("19 http://example.com/line-final", y_top=220.0, size=8.0, order_start=200)
         lines = build_visual_lines(body + sup + footer)
         anchors = detect_superscript_anchors(lines)
         bodies, idx = detect_footnote_bodies(lines, page_height=300.0)
@@ -99,7 +117,7 @@ class FootnotePipelineTests(unittest.TestCase):
     def test_heading_title_anchor_detected(self) -> None:
         title = self._chars_for_text("Chapter 1: Intro", y_top=30.0, size=12.0, order_start=0)
         sup = self._chars_for_text("1", y_top=27.5, size=9.5, x_start=title[-1].x1 + 0.3, order_start=100)
-        bodies = self._chars_for_text("1 heading footnote", y_top=220.0, size=8.0, order_start=200)
+        bodies = self._chars_for_text("1 http://example.com/heading-footnote", y_top=220.0, size=8.0, order_start=200)
         lines = build_visual_lines(title + sup + bodies)
         anchors = detect_superscript_anchors(lines)
         foot_bodies, idx = detect_footnote_bodies(lines, page_height=300.0)
@@ -133,9 +151,9 @@ class FootnotePipelineTests(unittest.TestCase):
         s2 = self._chars_for_text("4", y_top=41.0, size=7.0, x_start=l2[-1].x1 + 0.4, order_start=300)
         l3 = self._chars_for_text("§2306.51", y_top=58.0, size=10.0, order_start=350)
         s3 = self._chars_for_text("8", y_top=55.0, size=7.0, x_start=l3[-1].x1 + 0.4, order_start=380)
-        b2 = self._chars_for_text("2 ref two", y_top=220.0, size=8.0, order_start=400)
-        b4 = self._chars_for_text("4 ref four", y_top=232.0, size=8.0, order_start=500)
-        b8 = self._chars_for_text("8 ref eight", y_top=244.0, size=8.0, order_start=600)
+        b2 = self._chars_for_text("2 http://example.com/two", y_top=220.0, size=8.0, order_start=400)
+        b4 = self._chars_for_text("4 http://example.com/four", y_top=232.0, size=8.0, order_start=500)
+        b8 = self._chars_for_text("8 http://example.com/eight", y_top=244.0, size=8.0, order_start=600)
         chars.extend(l1 + s1 + l2 + s2 + l3 + s3 + b2 + b4 + b8)
 
         lines = build_visual_lines(chars)
@@ -195,10 +213,10 @@ class FootnotePipelineTests(unittest.TestCase):
                 self.chars = []
                 self.chars.extend(helper._chars_for_text("Rule", y_top=60.0, size=10.0, order_start=0))
                 self.chars.extend(helper._chars_for_text("3", y_top=57.0, size=7.0, x_start=30.0, order_start=100))
-                self.chars.extend(helper._chars_for_text("2 url-two", y_top=220.0, size=8.0, order_start=200))
-                self.chars.extend(helper._chars_for_text("3 url-three", y_top=232.0, size=8.0, order_start=260))
-                self.chars.extend(helper._chars_for_text("4 url-four", y_top=244.0, size=8.0, order_start=320))
-                self.chars.extend(helper._chars_for_text("5 url-five", y_top=256.0, size=8.0, order_start=380))
+                self.chars.extend(helper._chars_for_text("2 http://example.com/two", y_top=220.0, size=8.0, order_start=200))
+                self.chars.extend(helper._chars_for_text("3 http://example.com/three", y_top=232.0, size=8.0, order_start=260))
+                self.chars.extend(helper._chars_for_text("4 http://example.com/four", y_top=244.0, size=8.0, order_start=320))
+                self.chars.extend(helper._chars_for_text("5 http://example.com/five", y_top=256.0, size=8.0, order_start=380))
 
             def extract_text(self) -> str:
                 return ""
@@ -223,10 +241,45 @@ class FootnotePipelineTests(unittest.TestCase):
         chunks = chunk_document_by_section(parsed)
         notes = [n for c in chunks for n in c.footnotes]
         contents = {n.id: n.content for n in notes}
-        self.assertEqual("url-two", contents.get("2"))
-        self.assertEqual("url-three", contents.get("3"))
-        self.assertEqual("url-four", contents.get("4"))
-        self.assertEqual("url-five", contents.get("5"))
+        self.assertEqual("http://example.com/two", contents.get("2"))
+        self.assertEqual("http://example.com/three", contents.get("3"))
+        self.assertEqual("http://example.com/four", contents.get("4"))
+        self.assertEqual("http://example.com/five", contents.get("5"))
+
+    def test_parser_does_not_duplicate_unmatched_tables_inline(self) -> None:
+        class _FakePage:
+            images = []
+            height = 300.0
+
+            def __init__(self) -> None:
+                helper = FootnotePipelineTests()
+                self.chars = []
+                self.chars.extend(helper._chars_for_text("Storage Size Gas EF Electric EF", y_top=80.0, size=10.0, order_start=0))
+                self.chars.extend(helper._chars_for_text("30 0.63 0.94", y_top=94.0, size=10.0, order_start=50))
+
+            def extract_text(self) -> str:
+                return ""
+
+            def extract_tables(self):
+                return [[["Storage Size", "Gas EF", "Electric EF"], ["30", "0.63", "0.94"]]]
+
+        class _FakeDoc:
+            pages = [_FakePage()]
+            def __enter__(self):
+                return self
+            def __exit__(self, exc_type, exc, tb):
+                return None
+
+        class _FakePdfPlumber:
+            @staticmethod
+            def open(_: str):
+                return _FakeDoc()
+
+        with patch("app.ingestion.parsers.pdf._require_pdfplumber", return_value=_FakePdfPlumber):
+            parsed = parse_pdf_file("dummy.pdf")
+        # table rows should not appear duplicated twice
+        self.assertEqual(1, parsed.count("| Storage Size | Gas EF | Electric EF |"))
+
 
 
 if __name__ == "__main__":

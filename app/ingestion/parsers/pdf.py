@@ -79,10 +79,18 @@ def _inject_tables_into_text_lines(page_text_lines: list[str], tables: list[list
                 inserted = True
                 break
 
+        # Avoid duplicating table content if similar table-like lines are already present;
+        # otherwise append markdown rows so table data is not lost.
         if not inserted:
-            if lines and lines[-1]:
-                lines.append("")
-            lines.extend(markdown_rows)
+            normalized_first = _normalize_match_line(plain_rows[0])
+            already_table_like = any(
+                _normalize_match_line(line).startswith(normalized_first[: max(8, len(normalized_first) // 2)])
+                for line in lines
+            )
+            if not already_table_like:
+                if lines and lines[-1]:
+                    lines.append("")
+                lines.extend(markdown_rows)
     return lines
 
 

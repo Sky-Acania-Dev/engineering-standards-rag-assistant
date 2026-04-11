@@ -21,7 +21,7 @@ def detect_footnote_bodies(lines: list[LineInfo], page_height: float) -> tuple[l
 
     lines_by_top = sorted(enumerate(lines), key=lambda item: item[1].top)
     median_size = _page_body_size(lines)
-    min_top = page_height * 0.35
+    min_top = page_height * 0.4
 
     first_candidate_pos: int | None = None
     for pos, (_, line) in enumerate(lines_by_top):
@@ -29,11 +29,10 @@ def detect_footnote_bodies(lines: list[LineInfo], page_height: float) -> tuple[l
         text = "".join(c.text for c in line.chars).strip()
         if line.top < min_top or parsed is None:
             continue
-        if _is_footer_artifact(text, line, page_height=page_height):
+        if _is_footer_artifact(text, line, page_height=page_height) or _looks_like_table_row(text):
             continue
-        size_ok = line.body_size <= median_size * 1.45 if median_size > 0 else True
-        if size_ok:
-            # Start at first plausible parsed label line; avoid skipping the first footer footnote entry.
+        size_ok = line.body_size <= median_size * 1.2 if median_size > 0 else True
+        if size_ok and (_looks_like_footnote_lexical(text) or _has_vertical_gap(lines_by_top, pos)):
             first_candidate_pos = pos
             break
 
@@ -51,7 +50,7 @@ def detect_footnote_bodies(lines: list[LineInfo], page_height: float) -> tuple[l
         raw_text = "".join(c.text for c in line.chars).strip()
         if not raw_text:
             continue
-        if _is_footer_artifact(raw_text, line, page_height=page_height):
+        if _is_footer_artifact(raw_text, line, page_height=page_height) or _looks_like_table_row(raw_text):
             continue
 
         parsed = _parse_label_from_line(line)
@@ -103,6 +102,9 @@ def detect_footnote_bodies(lines: list[LineInfo], page_height: float) -> tuple[l
         if body.label not in deduped:
             deduped[body.label] = body
     ordered = sorted(deduped.values(), key=lambda b: int(b.label))
+
+    if not _is_valid_footnote_block(ordered, median_size):
+        return [], set()
     return ordered, consumed_lines
 
 
@@ -176,6 +178,24 @@ def _has_vertical_gap(lines_by_top: list[tuple[int, LineInfo]], pos: int) -> boo
     line = lines_by_top[pos][1]
     gap = max(0.0, line.top - prev_line.bottom)
     return gap >= max(4.0, line.body_size * 1.05)
+
+
+def _looks_like_table_row(text: str) -> bool:
+    normalized = " ".join(text.split())
+    if "|" in normalized:
+        return True
+    return bool(re.search(r"\S+\s{2,}\S+\s{2,}\S+", text))
+
+
+def _is_valid_footnote_block(bodies: list[FootnoteBody], median_size: float) -> bool:
+    if not bodies:
+        return False
+    lexical_count = sum(1 for body in bodies if _looks_like_footnote_lexical(body.content))
+    if lexical_count == 0:
+        return False
+    if len(bodies) >= 6 and lexical_count <= 1:
+        return False
+    return True
 
 
 def _looks_like_footnote_lexical(text: str) -> bool:
