@@ -219,11 +219,11 @@ class PDFParserTests(unittest.TestCase):
         ]
         debug = _build_phase2_bottom_region_debug_for_page(_FakePage(chars), page_number=7)
         self.assertEqual("true_footnote_block", debug["classification"])
-        self.assertEqual(["2", "3", "10", "11"], debug["parsed_body_labels"])
+        self.assertEqual(["3", "10", "11"], debug["parsed_body_labels"])
         self.assertTrue(debug["checks"]["passes_true_footnote_check"])
-        self.assertEqual(["2", "3", "10", "11"], [item["label"] for item in debug["detected_content"]])
+        self.assertEqual(["3", "10", "11"], [item["label"] for item in debug["detected_content"]])
         self.assertEqual(
-            [2, 3, 10, 11],
+            [3, 10, 11],
             [item["anchor_number"] for item in debug["detected_footnotes"]],
         )
         self.assertTrue(
@@ -314,7 +314,8 @@ class PDFParserTests(unittest.TestCase):
         ]
         debug = _build_phase2_bottom_region_debug_for_page(_FakePage(chars), page_number=8)
         self.assertEqual("true_footnote_block", debug["classification"])
-        self.assertEqual(["6"], debug["parsed_body_labels"])
+        self.assertEqual(["2", "6"], debug["parsed_body_labels"])
+        self.assertEqual(["2", "6"], debug["starting_label_candidates"])
 
     def test_phase2_drops_non_url_numbered_prose_when_url_footnote_present(self) -> None:
         class _FakePage:
@@ -346,7 +347,37 @@ class PDFParserTests(unittest.TestCase):
             {"text": "/", "x0": 36, "x1": 38, "top": 192, "bottom": 200, "doctop": 192, "size": 9},
         ]
         debug = _build_phase2_bottom_region_debug_for_page(_FakePage(chars), page_number=21)
-        self.assertEqual(["11"], debug["parsed_body_labels"])
+        self.assertEqual(["7", "11"], debug["parsed_body_labels"])
+
+    def test_phase2_keeps_trailing_footnote_after_bullet_list_prefix(self) -> None:
+        class _FakePage:
+            def __init__(self, chars: list[dict[str, object]], *, height: float = 220) -> None:
+                self.chars = chars
+                self.height = height
+
+            def extract_tables(self) -> list[list[list[str]]]:
+                return []
+
+        chars = [
+            # Bullet-list lines (body-sized)
+            {"text": "•", "x0": 10, "x1": 14, "top": 150, "bottom": 162, "doctop": 150, "size": 12},
+            {"text": " ", "x0": 14, "x1": 16, "top": 150, "bottom": 162, "doctop": 150, "size": 12},
+            {"text": "A", "x0": 16, "x1": 20, "top": 150, "bottom": 162, "doctop": 150, "size": 12},
+            {"text": "•", "x0": 10, "x1": 14, "top": 165, "bottom": 177, "doctop": 165, "size": 12},
+            {"text": " ", "x0": 14, "x1": 16, "top": 165, "bottom": 177, "doctop": 165, "size": 12},
+            {"text": "B", "x0": 16, "x1": 20, "top": 165, "bottom": 177, "doctop": 165, "size": 12},
+            # Trailing superscript-like footnote label
+            {"text": "6", "x0": 10, "x1": 12, "top": 188, "bottom": 194, "doctop": 188, "size": 7},
+            {"text": " ", "x0": 12, "x1": 14, "top": 192, "bottom": 200, "doctop": 192, "size": 9},
+            {"text": "h", "x0": 14, "x1": 18, "top": 192, "bottom": 200, "doctop": 192, "size": 9},
+            {"text": "t", "x0": 18, "x1": 22, "top": 192, "bottom": 200, "doctop": 192, "size": 9},
+            {"text": "t", "x0": 22, "x1": 26, "top": 192, "bottom": 200, "doctop": 192, "size": 9},
+            {"text": "p", "x0": 26, "x1": 30, "top": 192, "bottom": 200, "doctop": 192, "size": 9},
+        ]
+        debug = _build_phase2_bottom_region_debug_for_page(_FakePage(chars), page_number=8)
+        self.assertEqual("true_footnote_block", debug["classification"])
+        self.assertEqual(["6"], debug["parsed_body_labels"])
+        self.assertEqual(["6"], debug["starting_label_candidates"])
 
     def test_phase2_classifies_ordinary_numbered_list_as_non_footnote(self) -> None:
         class _FakePage:
@@ -374,6 +405,7 @@ class PDFParserTests(unittest.TestCase):
         debug = _build_phase2_bottom_region_debug_for_page(_FakePage(chars), page_number=8)
         self.assertEqual("ordinary_numbered_list", debug["classification"])
         self.assertEqual([], debug["parsed_body_labels"])
+        self.assertEqual(["1", "2", "3"], debug["starting_label_candidates"])
         self.assertEqual([], debug["detected_footnotes"])
         self.assertFalse(debug["checks"]["passes_true_footnote_check"])
 

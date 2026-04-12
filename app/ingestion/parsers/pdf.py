@@ -287,7 +287,7 @@ def _collect_bottom_region_lines(page: Any) -> list[dict[str, Any]]:
     if page_height <= 0:
         page_height = float(max(float(ch.get("bottom", 0.0)) for ch in chars))
     # Keep Phase 2 conservative but avoid clipping footnote starts.
-    cutoff_top = page_height * 0.65
+    cutoff_top = page_height * 0.75
     bottom_chars = [ch for ch in chars if float(ch.get("top", 0.0)) >= cutoff_top]
     if len(bottom_chars) < 10:
         cutoff_top = page_height * 0.60
@@ -366,12 +366,14 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]], *, page_numb
         parsed_body_labels: list[str],
         parsed_bodies: dict[str, str],
         checks: dict[str, Any],
+        starting_label_candidates: list[str] | None = None,
     ) -> dict[str, Any]:
         return {
             "classification": classification,
             "reasons": reasons,
             "parsed_body_labels": parsed_body_labels,
             "parsed_bodies": parsed_bodies,
+            "starting_label_candidates": starting_label_candidates or [],
             "detected_content": [
                 {"label": label, "content": parsed_bodies.get(label, "")}
                 for label in parsed_body_labels
@@ -400,8 +402,10 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]], *, page_numb
     line_size_median = float(median(line["median_size"] for line in lines if line["median_size"] > 0)) if lines else 0.0
 
     numbered_prefix = re.compile(r"^\s*(\d{1,3})([.)])\s+")
+    bullet_prefix = re.compile(r"^\s*[•◦▪‣●○·*\-]\s+\S")
     footnote_prefix = re.compile(r"^\s*(\d{1,3})(?:[.)])?\s+\S")
     numbered_list_lines = [line for line in lines if numbered_prefix.match(str(line["text"]))]
+    bullet_list_lines = [line for line in lines if bullet_prefix.match(str(line["text"]))]
     footnote_candidate_lines = [line for line in lines if footnote_prefix.match(str(line["text"]))]
 
     reasons: list[str] = []
@@ -436,28 +440,25 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]], *, page_numb
             )
 
     parsed_bodies_raw = _parse_footnote_bodies_from_lines(lines)
+    starting_label_candidates = list(parsed_bodies_raw.keys())
 
     # Numbered-list-first, footnote-later handling:
-    # if there is a long numbered-list run, re-parse only the tail lines after
-    # the last numbered-list item so trailing footnotes are not masked.
-    numbered_indices = [idx for idx, line in enumerate(lines) if numbered_prefix.match(str(line["text"]))]
-    if len(numbered_indices) >= 2:
-        tail_start = max(numbered_indices) + 1
+    # if there is a long list run (numbered or bulleted), re-parse only the
+    # tail lines after the last list item so trailing footnotes are not masked.
+    list_indices = [
+        idx
+        for idx, line in enumerate(lines)
+        if numbered_prefix.match(str(line["text"])) or bullet_prefix.match(str(line["text"]))
+    ]
+    if len(list_indices) >= 2:
+        tail_start = max(list_indices) + 1
         tail_lines = lines[tail_start:]
         if tail_lines:
             tail_parsed = _parse_footnote_bodies_from_lines(tail_lines)
             if tail_parsed:
                 parsed_bodies_raw = tail_parsed
-        elif len(numbered_indices) >= 3:
+        elif len(list_indices) >= 3:
             parsed_bodies_raw = {}
-    # If labels jump (e.g., list items followed by later footnote labels),
-    # keep only the trailing block from the first non-consecutive jump.
-    parsed_labels_raw = list(parsed_bodies_raw.keys())
-    parsed_ids_raw = [int(label) for label in parsed_labels_raw if label.isdigit()]
-    if len(parsed_ids_raw) == 3 and len(parsed_ids_raw) == len(parsed_labels_raw):
-        jump_index = next((i for i in range(1, len(parsed_ids_raw)) if (parsed_ids_raw[i] - parsed_ids_raw[i - 1]) > 1), None)
-        if jump_index is not None:
-            parsed_bodies_raw = {label: parsed_bodies_raw[label] for label in parsed_labels_raw[jump_index:]}
 
     parsed_bodies = {
         label: content
@@ -479,9 +480,10 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]], *, page_numb
             parsed_body_labels=[],
             parsed_bodies={},
             checks=checks,
+            starting_label_candidates=starting_label_candidates,
         )
 
-    if len(numbered_list_lines) >= 3 and line_size_median >= page_size_median * 0.95:
+    if (len(numbered_list_lines) >= 3 or len(bullet_list_lines) >= 3) and line_size_median >= page_size_median * 0.95:
         reasons.append("numbered_lines_are_body_sized")
         checks["body_sized_numbered_negative"] = True
         return _result(
@@ -490,6 +492,7 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]], *, page_numb
             parsed_body_labels=[],
             parsed_bodies={},
             checks=checks,
+            starting_label_candidates=starting_label_candidates,
         )
 
     # Ignore footer-only regions (e.g., isolated page numbers at far-right).
@@ -501,6 +504,7 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]], *, page_numb
             parsed_body_labels=[],
             parsed_bodies={},
             checks=checks,
+            starting_label_candidates=starting_label_candidates,
         )
 
     if len(parsed_ids) >= 1:
@@ -519,6 +523,7 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]], *, page_numb
                 parsed_body_labels=parsed_labels,
                 parsed_bodies=parsed_bodies,
                 checks=checks,
+                starting_label_candidates=starting_label_candidates,
             )
 
     reasons.append("insufficient_footnote_signals")
@@ -528,6 +533,7 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]], *, page_numb
         parsed_body_labels=parsed_labels,
         parsed_bodies=parsed_bodies,
         checks=checks,
+        starting_label_candidates=starting_label_candidates,
     )
 
 
@@ -560,6 +566,7 @@ def _build_phase2_bottom_region_debug_for_page(page: Any, page_number: int) -> d
         "reasons_for_classification": classified["reasons"],
         "parsed_body_labels": classified["parsed_body_labels"],
         "parsed_bodies": classified["parsed_bodies"],
+        "starting_label_candidates": classified.get("starting_label_candidates", []),
         "detected_content": classified["detected_content"],
         "checks": classified["checks"],
         "detected_footnotes": detected_footnotes,
