@@ -69,6 +69,8 @@ Success conditions for phase 2:
 - DWH EF table page classified as table_region, not footnotes
 - no bogus ids like 80, 200, 48
 
+PHASE 2 is done at this point. All footnote contents at the end of the pages in the pdf are detected with anchor id properly identified.
+
 PHASE 3 — LINKING ONLY
 Use only:
 - anchors from phase 1
