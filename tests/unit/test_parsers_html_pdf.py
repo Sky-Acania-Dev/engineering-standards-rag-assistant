@@ -282,6 +282,31 @@ class PDFParserTests(unittest.TestCase):
         self.assertEqual("true_footnote_block", debug["classification"])
         self.assertEqual(["9"], debug["parsed_body_labels"])
 
+    def test_phase2_parses_label_only_line_then_continuation_content(self) -> None:
+        class _FakePage:
+            def __init__(self, chars: list[dict[str, object]], *, height: float = 220) -> None:
+                self.chars = chars
+                self.height = height
+
+            def extract_tables(self) -> list[list[list[str]]]:
+                return []
+
+        chars = [
+            {"text": "B", "x0": 10, "x1": 14, "top": 20, "bottom": 32, "doctop": 20, "size": 12},
+            # Superscript-like label-only line
+            {"text": "2", "x0": 10, "x1": 12, "top": 186, "bottom": 192, "doctop": 186, "size": 7},
+            {"text": " ", "x0": 12, "x1": 14, "top": 190, "bottom": 198, "doctop": 190, "size": 9},
+            # Continuation line with URL text
+            {"text": "h", "x0": 14, "x1": 18, "top": 190, "bottom": 198, "doctop": 190, "size": 9},
+            {"text": "t", "x0": 18, "x1": 22, "top": 190, "bottom": 198, "doctop": 190, "size": 9},
+            {"text": "t", "x0": 22, "x1": 26, "top": 190, "bottom": 198, "doctop": 190, "size": 9},
+            {"text": "p", "x0": 26, "x1": 30, "top": 190, "bottom": 198, "doctop": 190, "size": 9},
+        ]
+        debug = _build_phase2_bottom_region_debug_for_page(_FakePage(chars), page_number=7)
+        self.assertEqual("true_footnote_block", debug["classification"])
+        self.assertEqual(["2"], debug["parsed_body_labels"])
+        self.assertEqual("http", debug["parsed_bodies"]["2"])
+
     def test_phase2_keeps_trailing_footnote_after_numbered_list_prefix(self) -> None:
         class _FakePage:
             def __init__(self, chars: list[dict[str, object]], *, height: float = 220) -> None:
@@ -314,7 +339,7 @@ class PDFParserTests(unittest.TestCase):
         ]
         debug = _build_phase2_bottom_region_debug_for_page(_FakePage(chars), page_number=8)
         self.assertEqual("true_footnote_block", debug["classification"])
-        self.assertEqual(["2", "6"], debug["parsed_body_labels"])
+        self.assertEqual(["6"], debug["parsed_body_labels"])
         self.assertEqual(["2", "6"], debug["starting_label_candidates"])
 
     def test_phase2_drops_non_url_numbered_prose_when_url_footnote_present(self) -> None:

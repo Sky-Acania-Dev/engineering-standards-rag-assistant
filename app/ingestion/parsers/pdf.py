@@ -313,14 +313,15 @@ def _collect_bottom_region_lines(page: Any) -> list[dict[str, Any]]:
 def _parse_footnote_bodies_from_lines(lines: list[dict[str, Any]]) -> dict[str, str]:
     parsed: dict[str, str] = {}
     current_label: str | None = None
-    label_pattern = re.compile(r"^(\d{1,3})(?:[.)])?\s+(\S.*)$")
+    label_pattern = re.compile(r"^(\d{1,3})(?:[.)])?(?:\s+(.*))?$")
 
     for line in lines:
         text = str(line["text"]).strip()
         match = label_pattern.match(text)
         if match:
             current_label = match.group(1)
-            parsed[current_label] = match.group(2).strip()
+            initial_content = (match.group(2) or "").strip()
+            parsed[current_label] = initial_content
             continue
         if current_label is not None:
             parsed[current_label] = f"{parsed[current_label]} {text}".strip()
@@ -403,7 +404,7 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]], *, page_numb
 
     numbered_prefix = re.compile(r"^\s*(\d{1,3})([.)])\s+")
     bullet_prefix = re.compile(r"^\s*[•◦▪‣●○·*\-]\s+\S")
-    footnote_prefix = re.compile(r"^\s*(\d{1,3})(?:[.)])?\s+\S")
+    footnote_prefix = re.compile(r"^\s*(\d{1,3})(?:[.)])?(?:\s+\S.*)?\s*$")
     numbered_list_lines = [line for line in lines if numbered_prefix.match(str(line["text"]))]
     bullet_list_lines = [line for line in lines if bullet_prefix.match(str(line["text"]))]
     footnote_candidate_lines = [line for line in lines if footnote_prefix.match(str(line["text"]))]
@@ -509,7 +510,17 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]], *, page_numb
 
     if len(parsed_ids) >= 1:
         small_text = line_size_median > 0 and page_size_median > 0 and line_size_median <= page_size_median * 0.9
-        superscript_label_present = any(_line_starts_with_superscript_numeric_label(line) for line in footnote_candidate_lines)
+        superscript_labels: set[str] = set()
+        for line in footnote_candidate_lines:
+            if not _line_starts_with_superscript_numeric_label(line):
+                continue
+            label_match = re.match(r"^\s*(\d{1,3})(?:[.)])?(?:\s+\S.*)?\s*$", str(line["text"]))
+            if label_match:
+                superscript_labels.add(label_match.group(1))
+        superscript_label_present = bool(superscript_labels)
+        if superscript_labels:
+            parsed_labels = [label for label in parsed_labels if label in superscript_labels]
+            parsed_bodies = {label: parsed_bodies[label] for label in parsed_labels}
         checks["small_text"] = small_text
         checks["superscript_label_present"] = superscript_label_present
         if superscript_label_present:
