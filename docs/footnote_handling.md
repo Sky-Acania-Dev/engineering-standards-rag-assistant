@@ -1,4 +1,4 @@
-# Footnote Handling System (Phases 1–2 Complete, Phase 3 Planned)
+# Footnote Handling System (Phases 1–3 Complete, Phase 4 Planned)
 
 ## Scope and current status
 
@@ -6,7 +6,7 @@ This repository currently implements **Phase 1** and **Phase 2** of a staged PDF
 
 - **Phase 1:** detect inline superscript anchors from `pdfplumber` character geometry.
 - **Phase 2:** classify bottom-of-page regions and parse candidate footnote bodies only when the region is validated as a true footnote block.
-- **Phase 3:** not yet implemented in code (linking anchors ↔ bodies only).
+- **Phase 3:** implemented as a debug-only linker (anchors ↔ bodies only).
 - **Phase 4:** not yet implemented in code (integration into extracted text/chunks).
 
 The phased strategy is explicit in `temp/Codex Prompt Temp.txt`, including guardrails about avoiding false positives and avoiding id-shifting when labels are missing.
@@ -23,6 +23,7 @@ Core phase-specific entry points:
 
 - `extract_phase1_superscript_anchor_debug(pdf_path)`
 - `extract_phase2_page_bottom_debug(pdf_path)`
+- `extract_phase3_linking_debug(pdf_path)`
 
 Both return **debug-first** artifacts, intentionally separate from full PDF text extraction (`parse_pdf_file`), so phases can be verified without mutating content.
 
@@ -187,11 +188,11 @@ Fixtures include representative debug samples:
 
 ---
 
-## Phase 3 plan (linking only, no text mutation)
+## Phase 3 implementation (linking only, no text mutation)
 
-The requested Phase 3 should be implemented as a pure linkage layer using only Phase 1 + Phase 2 artifacts.
+Phase 3 is implemented as a pure linkage layer using only Phase 1 + Phase 2 artifacts.
 
-### Planned implementation steps
+### Implemented behavior
 
 1. **Create id-indexed maps from existing debug outputs (no text/tag mutation)**
    - markers by `anchor_id` from Phase 1 (`detected_anchors`), retaining full marker records and pages.
@@ -210,21 +211,23 @@ The requested Phase 3 should be implemented as a pure linkage layer using only P
      - footnote content page/source
      - list of linked marker records
    - return **orphan marker list** (markers with no content id match).
-   - do not return a separate orphan-content list; entries in the full footnote content list with empty linked marker arrays are implicit orphan contents.
+   - return an **orphan content pool** (content blocks with no linked markers yet), so deferred reconciliation can run explicitly.
 
-4. **Add phase-3 debug API**
-   - e.g., `extract_phase3_linking_debug(pdf_path)` returning per-page:
+4. **Phase-3 debug API**
+   - `extract_phase3_linking_debug(pdf_path)` returns per-page:
      - marker ids
      - content ids
-     - linked footnote contents (with linked marker lists)
-     - orphan markers
-     - (no separate orphan-content list; infer from empty linked-marker arrays)
+     - resolved links
+     - dropped anchors with reason
+   - plus document-level pools:
+     - `orphan_markers`
+     - `orphan_content_pool` (for deferred reconciliation)
 
 5. **Keep extraction/chunk code untouched**
    - no marker insertion, no stripping, no metadata emission yet.
    - Phase 3 should emit a link artifact for Phase 4 consumption (rather than mutating `document_text` directly).
 
-### Planned tests for Phase 3
+### Test coverage for Phase 3
 
 - page 5 anchor `1` links to body `1`.
 - page 7 mapping for `2/3/4/5` remains stable (no id shifts).

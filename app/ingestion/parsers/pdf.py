@@ -605,6 +605,236 @@ def extract_phase2_page_bottom_debug(pdf_path: str | Path) -> list[dict[str, Any
         ]
 
 
+def _build_phase3_linking_debug(
+    phase1_anchor_debug: list[dict[str, Any]],
+    phase2_bottom_debug: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Phase 3 linker: page-local first, then cross-page fallback, no text mutation."""
+    page_marker_map: dict[int, list[dict[str, Any]]] = {}
+    for page in phase1_anchor_debug:
+        page_number = int(page.get("page", 0) or 0)
+        markers = list(page.get("detected_anchors", []) or [])
+        page_marker_map[page_number] = markers
+
+    content_records: list[dict[str, Any]] = []
+    page_content_map: dict[int, dict[str, dict[str, Any]]] = {}
+    for page in phase2_bottom_debug:
+        page_number = int(page.get("page", 0) or 0)
+        if str(page.get("classification", "")) != "true_footnote_block":
+            page_content_map.setdefault(page_number, {})
+            continue
+        parsed_bodies = dict(page.get("parsed_bodies", {}) or {})
+        page_map = page_content_map.setdefault(page_number, {})
+        for label, content in parsed_bodies.items():
+            normalized_id = str(label)
+            record = {
+                "content_id": normalized_id,
+                "footnote_content_page": page_number,
+                "footnote_content_detected": str(content),
+                "linked_markers": [],
+            }
+            # Keep first content occurrence per id per page to avoid accidental id shifting.
+            page_map.setdefault(normalized_id, record)
+            content_records.append(record)
+
+    # Explicit orphan pools for deferred reconciliation.
+    orphan_marker_pool: list[dict[str, Any]] = []
+    for page_number in sorted(page_marker_map):
+        for marker in page_marker_map[page_number]:
+            orphan_marker_pool.append(
+                {
+                    "page": page_number,
+                    "anchor_id": str(marker.get("anchor_id", "")),
+                    "marker": marker,
+                }
+            )
+    orphan_content_pool: list[dict[str, Any]] = [
+        {
+            "content_id": str(record["content_id"]),
+            "footnote_content_page": int(record["footnote_content_page"]),
+            "footnote_content_detected": str(record["footnote_content_detected"]),
+        }
+        for record in content_records
+    ]
+
+    links: list[dict[str, Any]] = []
+
+    def _remove_marker_from_orphan_pool(page_number: int, anchor_id: str, marker_ref: dict[str, Any]) -> None:
+        for idx, orphan in enumerate(orphan_marker_pool):
+            if (
+                int(orphan.get("page", 0) or 0) == page_number
+                and str(orphan.get("anchor_id", "")) == anchor_id
+                and orphan.get("marker") is marker_ref
+            ):
+                orphan_marker_pool.pop(idx)
+                return
+
+    def _remove_content_from_orphan_pool(content_page: int, content_id: str) -> None:
+        for idx, orphan in enumerate(orphan_content_pool):
+            if (
+                int(orphan.get("footnote_content_page", 0) or 0) == content_page
+                and str(orphan.get("content_id", "")) == content_id
+            ):
+                orphan_content_pool.pop(idx)
+                return
+
+    # Pass 1: page-local ID linking.
+    unresolved_markers: list[dict[str, Any]] = []
+    for marker_ref in list(orphan_marker_pool):
+        page_number = int(marker_ref["page"])
+        anchor_id = str(marker_ref["anchor_id"])
+        marker = marker_ref["marker"]
+        local_content = page_content_map.get(page_number, {}).get(anchor_id)
+        if local_content is None:
+            unresolved_markers.append(marker_ref)
+            continue
+        link = {
+            "anchor_page": page_number,
+            "anchor_id": anchor_id,
+            "content_page": int(local_content["footnote_content_page"]),
+            "link_mode": "page_local_id_match",
+            "marker": marker,
+            "content": {
+                "content_id": str(local_content["content_id"]),
+                "footnote_content_page": int(local_content["footnote_content_page"]),
+                "footnote_content_detected": str(local_content["footnote_content_detected"]),
+            },
+        }
+        local_content["linked_markers"].append(
+            {
+                "anchor_id": anchor_id,
+                "anchor_page": page_number,
+                "line_index": marker.get("line_index"),
+                "bbox": marker.get("bbox"),
+                "nearby_anchor_text": marker.get("nearby_anchor_text"),
+            }
+        )
+        links.append(link)
+        _remove_marker_from_orphan_pool(page_number, anchor_id, marker)
+        _remove_content_from_orphan_pool(int(local_content["footnote_content_page"]), anchor_id)
+
+    # Pass 2: fallback cross-page ID linking for unresolved orphan markers.
+    content_by_id: dict[str, list[dict[str, Any]]] = {}
+    for record in content_records:
+        content_by_id.setdefault(str(record["content_id"]), []).append(record)
+    for records in content_by_id.values():
+        records.sort(key=lambda item: int(item["footnote_content_page"]))
+
+    dropped_anchors: list[dict[str, Any]] = []
+    for marker_ref in unresolved_markers:
+        page_number = int(marker_ref["page"])
+        anchor_id = str(marker_ref["anchor_id"])
+        marker = marker_ref["marker"]
+        candidates = content_by_id.get(anchor_id, [])
+        if not candidates:
+            dropped_anchors.append(
+                {
+                    "anchor_page": page_number,
+                    "anchor_id": anchor_id,
+                    "reason": "no_matching_content_id",
+                }
+            )
+            continue
+        selected = sorted(
+            candidates,
+            key=lambda item: (abs(int(item["footnote_content_page"]) - page_number), int(item["footnote_content_page"])),
+        )[0]
+        selected["linked_markers"].append(
+            {
+                "anchor_id": anchor_id,
+                "anchor_page": page_number,
+                "line_index": marker.get("line_index"),
+                "bbox": marker.get("bbox"),
+                "nearby_anchor_text": marker.get("nearby_anchor_text"),
+            }
+        )
+        links.append(
+            {
+                "anchor_page": page_number,
+                "anchor_id": anchor_id,
+                "content_page": int(selected["footnote_content_page"]),
+                "link_mode": "cross_page_id_fallback",
+                "marker": marker,
+                "content": {
+                    "content_id": str(selected["content_id"]),
+                    "footnote_content_page": int(selected["footnote_content_page"]),
+                    "footnote_content_detected": str(selected["footnote_content_detected"]),
+                },
+            }
+        )
+        _remove_marker_from_orphan_pool(page_number, anchor_id, marker)
+        _remove_content_from_orphan_pool(int(selected["footnote_content_page"]), anchor_id)
+
+    pages = sorted(set(page_marker_map.keys()) | set(page_content_map.keys()))
+    per_page_debug: list[dict[str, Any]] = []
+    for page_number in pages:
+        marker_ids = [str(item.get("anchor_id", "")) for item in page_marker_map.get(page_number, [])]
+        body_ids = sorted(page_content_map.get(page_number, {}).keys(), key=lambda raw: int(raw) if raw.isdigit() else raw)
+        page_links = [
+            {
+                "anchor_id": str(link["anchor_id"]),
+                "anchor_page": int(link["anchor_page"]),
+                "content_page": int(link["content_page"]),
+                "link_mode": str(link["link_mode"]),
+            }
+            for link in links
+            if int(link["anchor_page"]) == page_number
+        ]
+        page_dropped = [entry for entry in dropped_anchors if int(entry["anchor_page"]) == page_number]
+        per_page_debug.append(
+            {
+                "page": page_number,
+                "anchor_ids": marker_ids,
+                "body_ids": body_ids,
+                "resolved_links": page_links,
+                "dropped_anchors": page_dropped,
+            }
+        )
+
+    linked_footnote_contents = sorted(
+        content_records,
+        key=lambda item: (int(item["footnote_content_page"]), int(item["content_id"]) if str(item["content_id"]).isdigit() else str(item["content_id"])),
+    )
+    orphan_markers = [
+        {
+            "anchor_page": int(marker["page"]),
+            "anchor_id": str(marker["anchor_id"]),
+        }
+        for marker in orphan_marker_pool
+    ]
+
+    return {
+        "pages": per_page_debug,
+        "resolved_links": [
+            {
+                "anchor_page": int(link["anchor_page"]),
+                "anchor_id": str(link["anchor_id"]),
+                "content_page": int(link["content_page"]),
+                "link_mode": str(link["link_mode"]),
+            }
+            for link in links
+        ],
+        "linked_footnote_contents": [
+            {
+                "content_id": str(item["content_id"]),
+                "footnote_content_page": int(item["footnote_content_page"]),
+                "footnote_content_detected": str(item["footnote_content_detected"]),
+                "linked_markers": list(item["linked_markers"]),
+            }
+            for item in linked_footnote_contents
+        ],
+        "orphan_markers": orphan_markers,
+        "orphan_content_pool": orphan_content_pool,
+    }
+
+
+def extract_phase3_linking_debug(pdf_path: str | Path) -> dict[str, Any]:
+    """Phase 3 debug helper: link Phase 1 anchors to Phase 2 bodies."""
+    phase1 = extract_phase1_superscript_anchor_debug(pdf_path)
+    phase2 = extract_phase2_page_bottom_debug(pdf_path)
+    return _build_phase3_linking_debug(phase1, phase2)
+
+
 def _extract_structured_page_text_pypdf(page: Any, page_number: int) -> str:
     text = (page.extract_text() or "").strip()
     lines = [f"## Page {page_number}"]
