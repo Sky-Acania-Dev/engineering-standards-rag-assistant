@@ -131,3 +131,4 @@ Notes:
 
 - Footer artifacts like `"| Page"` are filtered from parsed label/content pairs before final pass/fail checks.
 - `small_text` remains in debug checks for diagnostics, but does not block classification on its own.
+- When a numbered list appears above a trailing footnote block on the same page, URL-like parsed bodies are retained so true footnotes are not masked by early list negatives.

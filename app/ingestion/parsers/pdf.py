@@ -358,6 +358,11 @@ def _line_starts_with_superscript_numeric_label(line: dict[str, Any]) -> bool:
     return run_size <= line_size * 0.9 and (line_top - run_top) >= 0.2
 
 
+def _is_probable_footnote_content(text: str) -> bool:
+    lowered = text.lower()
+    return ("http" in lowered) or ("www." in lowered)
+
+
 def _classify_bottom_region(page: Any, lines: list[dict[str, Any]], *, page_number: int) -> dict[str, Any]:
     def _result(
         *,
@@ -435,7 +440,20 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]], *, page_numb
                 checks=checks,
             )
 
-    if len(numbered_list_lines) >= 3 and len(footnote_candidate_lines) <= 1:
+    parsed_bodies_raw = _parse_footnote_bodies_from_lines(lines)
+    parsed_bodies = {
+        label: content
+        for label, content in parsed_bodies_raw.items()
+        if not (content.strip() in {"| Page", "Page", "|Page"})
+        and not (label.isdigit() and int(label) == page_number and content.strip().startswith("| Page"))
+        and not (label.isdigit() and int(label) >= 100)
+        and _is_probable_footnote_content(content)
+    }
+    parsed_labels = list(parsed_bodies.keys())
+    parsed_ids = [int(label) for label in parsed_labels if label.isdigit()]
+    checks["parsed_ids_count"] = len(parsed_ids)
+
+    if len(numbered_list_lines) >= 3 and len(footnote_candidate_lines) <= 1 and len(parsed_ids) == 0:
         reasons.append("multi_line_numbered_list_prefix_pattern")
         checks["numbered_list_negative"] = True
         return _result(
@@ -446,7 +464,7 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]], *, page_numb
             checks=checks,
         )
 
-    if len(numbered_list_lines) >= 3 and line_size_median >= page_size_median * 0.95:
+    if len(numbered_list_lines) >= 3 and line_size_median >= page_size_median * 0.95 and len(parsed_ids) == 0:
         reasons.append("numbered_lines_are_body_sized")
         checks["body_sized_numbered_negative"] = True
         return _result(
@@ -456,18 +474,6 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]], *, page_numb
             parsed_bodies={},
             checks=checks,
         )
-
-    parsed_bodies_raw = _parse_footnote_bodies_from_lines(lines)
-    parsed_bodies = {
-        label: content
-        for label, content in parsed_bodies_raw.items()
-        if not (content.strip() in {"| Page", "Page", "|Page"})
-        and not (label.isdigit() and int(label) == page_number and content.strip().startswith("| Page"))
-        and not (label.isdigit() and int(label) >= 100)
-    }
-    parsed_labels = list(parsed_bodies.keys())
-    parsed_ids = [int(label) for label in parsed_labels if label.isdigit()]
-    checks["parsed_ids_count"] = len(parsed_ids)
 
     # Ignore footer-only regions (e.g., isolated page numbers at far-right).
     if len(lines) <= 2 and len(parsed_ids) == 0:
