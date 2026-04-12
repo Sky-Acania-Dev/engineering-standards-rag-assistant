@@ -222,6 +222,7 @@ The requested Phase 3 should be implemented as a pure linkage layer using only P
 
 5. **Keep extraction/chunk code untouched**
    - no marker insertion, no stripping, no metadata emission yet.
+   - Phase 3 should emit a link artifact for Phase 4 consumption (rather than mutating `document_text` directly).
 
 ### Planned tests for Phase 3
 
@@ -250,3 +251,25 @@ When Phase 3 is passing, Phase 4 should integrate conservatively:
 - never reinterpret ordinary numbered lists or table rows as footnotes.
 
 This keeps the current “prefer omission over false positives” strategy intact.
+
+### Integration point in pipeline
+
+Phase 4 should run as an **ingestion-time pre-chunking integration step**:
+
+1. parse/extract page text and table/image structure,
+2. run Phase 1/2 detection + Phase 3 linking,
+3. apply Phase 4 text integration from resolved links,
+4. then pass integrated `document_text` into chunking.
+
+This means `chunk_document_by_section(...)` receives already-integrated text and should not be responsible for rerunning char-geometry marker detection.
+
+### How Phase 4 uses Phase 1 outputs
+
+Phase 4 should use Phase 1 marker detections **indirectly** through Phase 3 resolved link artifacts.
+
+- Phase 1 provides marker candidates (`detected_anchors[]`).
+- Phase 2 provides validated footnote contents.
+- Phase 3 links marker ids to content ids and emits linked-content groups + orphan markers.
+- Phase 4 consumes that linked result to inject markers and metadata safely.
+
+If a workflow executes Phase 4 without persisted intermediate artifacts, Phase 1/2/3 must be recomputed in the same ingestion run before integration.
