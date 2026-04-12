@@ -9,6 +9,7 @@ from app.ingestion.parsers.html import ingest_html_folder, parse_html_content
 from app.ingestion.parsers.pdf import (
     _build_anchor_debug_for_page,
     _build_phase2_bottom_region_debug_for_page,
+    _build_phase3_linking_debug,
     parse_pdf_file,
 )
 
@@ -497,6 +498,54 @@ class PDFParserTests(unittest.TestCase):
         debug = _build_phase2_bottom_region_debug_for_page(_FakePage(chars), page_number=19)
         self.assertEqual("table_region", debug["classification"])
         self.assertEqual([], debug["parsed_body_labels"])
+
+    def test_phase3_prefers_page_local_then_cross_page_fallback(self) -> None:
+        phase1 = [
+            {"page": 5, "detected_anchors": [{"anchor_id": "1", "line_index": 0, "bbox": {}, "nearby_anchor_text": "Title1"}]},
+            {"page": 6, "detected_anchors": [{"anchor_id": "2", "line_index": 0, "bbox": {}, "nearby_anchor_text": "Body2"}]},
+            {"page": 7, "detected_anchors": [{"anchor_id": "2", "line_index": 1, "bbox": {}, "nearby_anchor_text": "Body2Again"}]},
+        ]
+        phase2 = [
+            {"page": 5, "classification": "true_footnote_block", "parsed_bodies": {"1": "title footnote"}},
+            {"page": 7, "classification": "true_footnote_block", "parsed_bodies": {"2": "shared body"}},
+        ]
+
+        debug = _build_phase3_linking_debug(phase1, phase2)
+        links = {(item["anchor_page"], item["anchor_id"]): item for item in debug["resolved_links"]}
+        self.assertEqual("page_local_id_match", links[(5, "1")]["link_mode"])
+        self.assertEqual("cross_page_id_fallback", links[(6, "2")]["link_mode"])
+        self.assertEqual("page_local_id_match", links[(7, "2")]["link_mode"])
+        self.assertEqual([], debug["orphan_markers"])
+
+    def test_phase3_supports_many_markers_to_one_content(self) -> None:
+        phase1 = [
+            {
+                "page": 9,
+                "detected_anchors": [
+                    {"anchor_id": "24", "line_index": 0, "bbox": {}, "nearby_anchor_text": "21.62"},
+                    {"anchor_id": "24", "line_index": 4, "bbox": {}, "nearby_anchor_text": "same id repeat"},
+                ],
+            }
+        ]
+        phase2 = [
+            {"page": 9, "classification": "true_footnote_block", "parsed_bodies": {"24": "single content"}}
+        ]
+
+        debug = _build_phase3_linking_debug(phase1, phase2)
+        linked_contents = [item for item in debug["linked_footnote_contents"] if item["content_id"] == "24"]
+        self.assertEqual(1, len(linked_contents))
+        self.assertEqual(2, len(linked_contents[0]["linked_markers"]))
+        self.assertEqual([], debug["orphan_markers"])
+        self.assertEqual([], [item for item in debug["orphan_content_pool"] if item["content_id"] == "24"])
+
+    def test_phase3_keeps_orphan_pools_and_drops_unmatched_anchor_ids(self) -> None:
+        phase1 = [{"page": 4, "detected_anchors": [{"anchor_id": "88", "line_index": 0, "bbox": {}, "nearby_anchor_text": "orphan"}]}]
+        phase2 = [{"page": 4, "classification": "true_footnote_block", "parsed_bodies": {"3": "unlinked body"}}]
+
+        debug = _build_phase3_linking_debug(phase1, phase2)
+        self.assertEqual([{"anchor_page": 4, "anchor_id": "88"}], debug["orphan_markers"])
+        self.assertEqual("88", debug["pages"][0]["dropped_anchors"][0]["anchor_id"])
+        self.assertEqual("3", debug["orphan_content_pool"][0]["content_id"])
 
     def test_parse_pdf_file_uses_pdfplumber_primary_extraction(self) -> None:
         class _FakePage:
