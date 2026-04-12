@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from statistics import median
 from typing import Any
 
@@ -265,6 +266,341 @@ def extract_phase1_superscript_anchor_debug(pdf_path: str | Path) -> list[dict[s
     with pdfplumber.open(str(pdf_path)) as doc:
         return [
             _build_anchor_debug_for_page(page, i)
+            for i, page in enumerate(doc.pages, start=1)
+        ]
+
+
+def _line_bbox(line_chars: list[dict[str, Any]]) -> dict[str, float]:
+    return {
+        "x0": float(min(float(ch.get("x0", 0.0)) for ch in line_chars)),
+        "top": float(min(float(ch.get("top", 0.0)) for ch in line_chars)),
+        "x1": float(max(float(ch.get("x1", ch.get("x0", 0.0))) for ch in line_chars)),
+        "bottom": float(max(float(ch.get("bottom", 0.0)) for ch in line_chars)),
+    }
+
+
+def _collect_bottom_region_lines(page: Any) -> list[dict[str, Any]]:
+    chars = list(getattr(page, "chars", []) or [])
+    if not chars:
+        return []
+    page_height = float(getattr(page, "height", 0.0) or 0.0)
+    if page_height <= 0:
+        page_height = float(max(float(ch.get("bottom", 0.0)) for ch in chars))
+    # Keep Phase 2 conservative but avoid clipping footnote starts.
+    cutoff_top = page_height * 0.75
+    bottom_chars = [ch for ch in chars if float(ch.get("top", 0.0)) >= cutoff_top]
+    if len(bottom_chars) < 10:
+        cutoff_top = page_height * 0.60
+        bottom_chars = [ch for ch in chars if float(ch.get("top", 0.0)) >= cutoff_top]
+    line_chars = _group_page_chars_into_lines(bottom_chars)
+    lines: list[dict[str, Any]] = []
+    for chars_in_line in line_chars:
+        line_text = _line_text(chars_in_line).strip()
+        if not line_text:
+            continue
+        line_sizes = [float(ch.get("size", 0.0) or 0.0) for ch in chars_in_line if float(ch.get("size", 0.0) or 0.0) > 0]
+        lines.append(
+            {
+                "text": line_text,
+                "bbox": _line_bbox(chars_in_line),
+                "median_size": float(median(line_sizes)) if line_sizes else 0.0,
+                "chars": chars_in_line,
+            }
+        )
+    return lines
+
+
+def _parse_footnote_bodies_from_lines(lines: list[dict[str, Any]]) -> dict[str, str]:
+    parsed: dict[str, str] = {}
+    current_label: str | None = None
+    label_pattern = re.compile(r"^(\d{1,3})(?:[.)])?(?:\s+(.*))?$")
+
+    for line in lines:
+        text = str(line["text"]).strip()
+        match = label_pattern.match(text)
+        if match:
+            current_label = match.group(1)
+            initial_content = (match.group(2) or "").strip()
+            parsed[current_label] = initial_content
+            continue
+        if current_label is not None:
+            parsed[current_label] = f"{parsed[current_label]} {text}".strip()
+    return parsed
+
+
+def _line_starts_with_superscript_numeric_label(line: dict[str, Any]) -> bool:
+    chars = list(line.get("chars", []) or [])
+    if not chars:
+        return False
+    idx = 0
+    while idx < len(chars) and str(chars[idx].get("text", "")).isspace():
+        idx += 1
+    run: list[dict[str, Any]] = []
+    while idx < len(chars) and str(chars[idx].get("text", "")).isdigit() and len(run) < 3:
+        run.append(chars[idx])
+        idx += 1
+    if not run or idx >= len(chars):
+        return False
+    next_text = str(chars[idx].get("text", ""))
+    if not next_text.isspace() and next_text not in {".", ")"}:
+        return False
+    # Require superscript-like geometry relative to the rest of the line.
+    line_chars = [
+        ch
+        for ch in chars
+        if ch not in run and str(ch.get("text", "")).strip() and str(ch.get("text", "")) not in {".", ")"}
+    ]
+    if not line_chars:
+        return False
+    line_size = median(float(ch.get("size", 0.0) or 0.0) for ch in line_chars)
+    line_top = median(float(ch.get("doctop", ch.get("top", 0.0))) for ch in line_chars)
+    run_size = median(float(ch.get("size", line_size) or line_size) for ch in run)
+    run_top = median(float(ch.get("doctop", ch.get("top", line_top))) for ch in run)
+    return run_size <= line_size * 0.9 and (line_top - run_top) >= 0.2
+
+
+def _classify_bottom_region(page: Any, lines: list[dict[str, Any]], *, page_number: int) -> dict[str, Any]:
+    def _result(
+        *,
+        classification: str,
+        reasons: list[str],
+        parsed_body_labels: list[str],
+        parsed_bodies: dict[str, str],
+        checks: dict[str, Any],
+        starting_label_candidates: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "classification": classification,
+            "reasons": reasons,
+            "parsed_body_labels": parsed_body_labels,
+            "parsed_bodies": parsed_bodies,
+            "starting_label_candidates": starting_label_candidates or [],
+            "detected_content": [
+                {"label": label, "content": parsed_bodies.get(label, "")}
+                for label in parsed_body_labels
+            ],
+            "checks": checks,
+        }
+
+    if not lines:
+        return _result(
+            classification="unknown",
+            reasons=["no_bottom_lines_detected"],
+            parsed_body_labels=[],
+            parsed_bodies={},
+            checks={"passes_true_footnote_check": False},
+        )
+
+    page_chars = list(getattr(page, "chars", []) or [])
+    region_top = min(float(line["bbox"]["top"]) for line in lines)
+    non_bottom_sizes = [
+        float(ch.get("size", 0.0) or 0.0)
+        for ch in page_chars
+        if float(ch.get("size", 0.0) or 0.0) > 0 and float(ch.get("top", 0.0)) < region_top
+    ]
+    page_sizes = [float(ch.get("size", 0.0) or 0.0) for ch in page_chars if float(ch.get("size", 0.0) or 0.0) > 0]
+    page_size_median = float(median(non_bottom_sizes)) if non_bottom_sizes else (float(median(page_sizes)) if page_sizes else 0.0)
+    line_size_median = float(median(line["median_size"] for line in lines if line["median_size"] > 0)) if lines else 0.0
+
+    numbered_prefix = re.compile(r"^\s*(\d{1,3})([.)])\s+")
+    bullet_prefix = re.compile(r"^\s*[•◦▪‣●○·*\-]\s+\S")
+    footnote_prefix = re.compile(r"^\s*(\d{1,3})(?:[.)])?(?:\s+\S.*)?\s*$")
+    numbered_list_lines = [line for line in lines if numbered_prefix.match(str(line["text"]))]
+    bullet_list_lines = [line for line in lines if bullet_prefix.match(str(line["text"]))]
+    footnote_candidate_lines = [line for line in lines if footnote_prefix.match(str(line["text"]))]
+
+    reasons: list[str] = []
+    checks: dict[str, Any] = {
+        "table_negative": False,
+        "numbered_list_negative": False,
+        "body_sized_numbered_negative": False,
+        "label_only_small_candidate": False,
+        "parsed_ids_count": 0,
+        "superscript_label_present": False,
+        "small_text": False,
+        "passes_true_footnote_check": False,
+    }
+
+    extracted_tables = page.extract_tables() or []
+    if extracted_tables:
+        table_token_count = 0
+        for table in extracted_tables:
+            for row in _table_rows(table):
+                for cell in row:
+                    if len(cell.split()) <= 6 and cell.strip():
+                        if cell in " ".join(str(line["text"]) for line in lines):
+                            table_token_count += 1
+        if table_token_count >= 2:
+            reasons.append("bottom_text_matches_extracted_table_cells")
+            checks["table_negative"] = True
+            return _result(
+                classification="table_region",
+                reasons=reasons,
+                parsed_body_labels=[],
+                parsed_bodies={},
+                checks=checks,
+            )
+
+    parsed_bodies_raw = _parse_footnote_bodies_from_lines(lines)
+    starting_label_candidates = list(parsed_bodies_raw.keys())
+
+    # Numbered-list-first, footnote-later handling:
+    # if there is a long list run (numbered or bulleted), re-parse only the
+    # tail lines after the last list item so trailing footnotes are not masked.
+    list_indices = [
+        idx
+        for idx, line in enumerate(lines)
+        if numbered_prefix.match(str(line["text"])) or bullet_prefix.match(str(line["text"]))
+    ]
+    if len(list_indices) >= 2:
+        tail_start = max(list_indices) + 1
+        tail_lines = lines[tail_start:]
+        if tail_lines:
+            tail_parsed = _parse_footnote_bodies_from_lines(tail_lines)
+            if tail_parsed:
+                parsed_bodies_raw = tail_parsed
+        elif len(list_indices) >= 3:
+            parsed_bodies_raw = {}
+
+    parsed_bodies = {
+        label: content
+        for label, content in parsed_bodies_raw.items()
+        if not (content.strip() in {"| Page", "Page", "|Page"})
+        and not (label.isdigit() and int(label) == page_number and content.strip().startswith("| Page"))
+        and not (label.isdigit() and int(label) >= 100)
+    }
+    parsed_labels = list(parsed_bodies.keys())
+    parsed_ids = [int(label) for label in parsed_labels if label.isdigit()]
+    checks["parsed_ids_count"] = len(parsed_ids)
+    label_only_pattern = re.compile(r"^\s*(\d{1,3})(?:[.)])?\s*$")
+    label_only_small_candidate = any(
+        label_only_pattern.match(str(line["text"]))
+        and float(line.get("median_size", 0.0) or 0.0) > 0
+        and page_size_median > 0
+        and float(line.get("median_size", 0.0) or 0.0) <= page_size_median * 0.9
+        for line in footnote_candidate_lines
+    )
+    checks["label_only_small_candidate"] = label_only_small_candidate
+
+    if (
+        (numbered_list_lines or bullet_list_lines)
+        and line_size_median >= page_size_median * 0.95
+        and len(parsed_ids) == 0
+        and not label_only_small_candidate
+    ):
+        reasons.append("numbered_lines_are_body_sized")
+        checks["body_sized_numbered_negative"] = True
+        return _result(
+            classification="ordinary_numbered_list",
+            reasons=reasons,
+            parsed_body_labels=[],
+            parsed_bodies={},
+            checks=checks,
+            starting_label_candidates=starting_label_candidates,
+        )
+
+    # Ignore footer-only regions (e.g., isolated page numbers at far-right).
+    if len(lines) <= 2 and len(parsed_ids) == 0:
+        reasons.append("footer_or_page_number_only")
+        return _result(
+            classification="unknown",
+            reasons=reasons,
+            parsed_body_labels=[],
+            parsed_bodies={},
+            checks=checks,
+            starting_label_candidates=starting_label_candidates,
+        )
+
+    if len(parsed_ids) >= 1:
+        small_text = line_size_median > 0 and page_size_median > 0 and line_size_median <= page_size_median * 0.9
+        superscript_labels: set[str] = set()
+        for line in footnote_candidate_lines:
+            label_match = re.match(r"^\s*(\d{1,3})(?:[.)])?(?:\s+\S.*)?\s*$", str(line["text"]))
+            if not label_match:
+                continue
+            if _line_starts_with_superscript_numeric_label(line):
+                superscript_labels.add(label_match.group(1))
+                continue
+            if (
+                label_only_pattern.match(str(line["text"]))
+                and float(line.get("median_size", 0.0) or 0.0) > 0
+                and page_size_median > 0
+                and float(line.get("median_size", 0.0) or 0.0) <= page_size_median * 0.9
+            ):
+                superscript_labels.add(label_match.group(1))
+        superscript_label_present = bool(superscript_labels)
+        if superscript_labels:
+            parsed_labels = [label for label in parsed_labels if label in superscript_labels]
+            parsed_bodies = {label: parsed_bodies[label] for label in parsed_labels}
+        checks["small_text"] = small_text
+        checks["superscript_label_present"] = superscript_label_present
+        if superscript_label_present:
+            reasons.extend(["superscript_numeric_label_prefix"])
+            if small_text:
+                reasons.append("smaller_bottom_text")
+            checks["passes_true_footnote_check"] = True
+            return _result(
+                classification="true_footnote_block",
+                reasons=reasons,
+                parsed_body_labels=parsed_labels,
+                parsed_bodies=parsed_bodies,
+                checks=checks,
+                starting_label_candidates=starting_label_candidates,
+            )
+
+    reasons.append("insufficient_footnote_signals")
+    return _result(
+        classification="unknown",
+        reasons=reasons,
+        parsed_body_labels=parsed_labels,
+        parsed_bodies=parsed_bodies,
+        checks=checks,
+        starting_label_candidates=starting_label_candidates,
+    )
+
+
+def _build_phase2_bottom_region_debug_for_page(page: Any, page_number: int) -> dict[str, Any]:
+    lines = _collect_bottom_region_lines(page)
+    if lines:
+        region_bbox = {
+            "x0": float(min(float(line["bbox"]["x0"]) for line in lines)),
+            "top": float(min(float(line["bbox"]["top"]) for line in lines)),
+            "x1": float(max(float(line["bbox"]["x1"]) for line in lines)),
+            "bottom": float(max(float(line["bbox"]["bottom"]) for line in lines)),
+        }
+    else:
+        region_bbox = None
+    classified = _classify_bottom_region(page, lines, page_number=page_number)
+    detected_footnotes: list[dict[str, Any]] = []
+    if classified["classification"] == "true_footnote_block":
+        for label in classified["parsed_body_labels"]:
+            detected_footnotes.append(
+                {
+                    "anchor_number": int(label),
+                    "footnote_content_page": page_number,
+                    "footnote_content_detected": classified["parsed_bodies"].get(label, ""),
+                }
+            )
+    return {
+        "page": page_number,
+        "region_bbox": region_bbox,
+        "classification": classified["classification"],
+        "reasons_for_classification": classified["reasons"],
+        "parsed_body_labels": classified["parsed_body_labels"],
+        "parsed_bodies": classified["parsed_bodies"],
+        "starting_label_candidates": classified.get("starting_label_candidates", []),
+        "detected_content": classified["detected_content"],
+        "checks": classified["checks"],
+        "detected_footnotes": detected_footnotes,
+    }
+
+
+def extract_phase2_page_bottom_debug(pdf_path: str | Path) -> list[dict[str, Any]]:
+    """Phase 2 debug helper: classify page-bottom regions and parse local body labels."""
+    pdfplumber = _require_pdfplumber()
+    with pdfplumber.open(str(pdf_path)) as doc:
+        return [
+            _build_phase2_bottom_region_debug_for_page(page, i)
             for i, page in enumerate(doc.pages, start=1)
         ]
 

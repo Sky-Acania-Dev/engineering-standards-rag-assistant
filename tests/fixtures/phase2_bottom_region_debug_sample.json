@@ -1,0 +1,15 @@
+[
+  {
+    "page": 7,
+    "region_bbox": {"x0": 42.1, "top": 612.4, "x1": 558.0, "bottom": 770.9},
+    "classification": "true_footnote_block",
+    "reasons_for_classification": ["sequential_numeric_labels", "smaller_bottom_text"],
+    "parsed_body_labels": ["2", "3", "4", "5"],
+    "parsed_bodies": {
+      "2": "Sample footnote body text.",
+      "3": "Sample footnote body text.",
+      "4": "Sample footnote body text.",
+      "5": "Sample footnote body text."
+    }
+  }
+]
