@@ -482,33 +482,33 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]], *, page_numb
     )
     checks["label_only_small_candidate"] = label_only_small_candidate
 
-    if len(numbered_list_lines) >= 3 and len(footnote_candidate_lines) <= 1 and not label_only_small_candidate:
-        reasons.append("multi_line_numbered_list_prefix_pattern")
-        checks["numbered_list_negative"] = True
-        return _result(
-            classification="ordinary_numbered_list",
-            reasons=reasons,
-            parsed_body_labels=[],
-            parsed_bodies={},
-            checks=checks,
-            starting_label_candidates=starting_label_candidates,
-        )
+    # if len(numbered_list_lines) >= 3 and len(footnote_candidate_lines) <= 1 and not label_only_small_candidate:
+    #     reasons.append("multi_line_numbered_list_prefix_pattern")
+    #     checks["numbered_list_negative"] = True
+    #     return _result(
+    #         classification="ordinary_numbered_list",
+    #         reasons=reasons,
+    #         parsed_body_labels=[],
+    #         parsed_bodies={},
+    #         checks=checks,
+    #         starting_label_candidates=starting_label_candidates,
+    #     )
 
-    if (
-        (len(numbered_list_lines) >= 3 or len(bullet_list_lines) >= 3)
-        and line_size_median >= page_size_median * 0.95
-        and not label_only_small_candidate
-    ):
-        reasons.append("numbered_lines_are_body_sized")
-        checks["body_sized_numbered_negative"] = True
-        return _result(
-            classification="ordinary_numbered_list",
-            reasons=reasons,
-            parsed_body_labels=[],
-            parsed_bodies={},
-            checks=checks,
-            starting_label_candidates=starting_label_candidates,
-        )
+    # if (
+    #     (len(numbered_list_lines) >= 3 or len(bullet_list_lines) >= 3)
+    #     and line_size_median >= page_size_median * 0.95
+    #     and not label_only_small_candidate
+    # ):
+    #     reasons.append("numbered_lines_are_body_sized")
+    #     checks["body_sized_numbered_negative"] = True
+    #     return _result(
+    #         classification="ordinary_numbered_list",
+    #         reasons=reasons,
+    #         parsed_body_labels=[],
+    #         parsed_bodies={},
+    #         checks=checks,
+    #         starting_label_candidates=starting_label_candidates,
+    #     )
 
     # Ignore footer-only regions (e.g., isolated page numbers at far-right).
     if len(lines) <= 2 and len(parsed_ids) == 0:
