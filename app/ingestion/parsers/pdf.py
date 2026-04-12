@@ -358,11 +358,6 @@ def _line_starts_with_superscript_numeric_label(line: dict[str, Any]) -> bool:
     return run_size <= line_size * 0.9 and (line_top - run_top) >= 0.2
 
 
-def _is_probable_footnote_content(text: str) -> bool:
-    lowered = text.lower()
-    return ("http" in lowered) or ("www." in lowered)
-
-
 def _classify_bottom_region(page: Any, lines: list[dict[str, Any]], *, page_number: int) -> dict[str, Any]:
     def _result(
         *,
@@ -441,19 +436,41 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]], *, page_numb
             )
 
     parsed_bodies_raw = _parse_footnote_bodies_from_lines(lines)
+
+    # Numbered-list-first, footnote-later handling:
+    # if there is a long numbered-list run, re-parse only the tail lines after
+    # the last numbered-list item so trailing footnotes are not masked.
+    numbered_indices = [idx for idx, line in enumerate(lines) if numbered_prefix.match(str(line["text"]))]
+    if len(numbered_indices) >= 2:
+        tail_start = max(numbered_indices) + 1
+        tail_lines = lines[tail_start:]
+        if tail_lines:
+            tail_parsed = _parse_footnote_bodies_from_lines(tail_lines)
+            if tail_parsed:
+                parsed_bodies_raw = tail_parsed
+        elif len(numbered_indices) >= 3:
+            parsed_bodies_raw = {}
+    # If labels jump (e.g., list items followed by later footnote labels),
+    # keep only the trailing block from the first non-consecutive jump.
+    parsed_labels_raw = list(parsed_bodies_raw.keys())
+    parsed_ids_raw = [int(label) for label in parsed_labels_raw if label.isdigit()]
+    if len(parsed_ids_raw) == 3 and len(parsed_ids_raw) == len(parsed_labels_raw):
+        jump_index = next((i for i in range(1, len(parsed_ids_raw)) if (parsed_ids_raw[i] - parsed_ids_raw[i - 1]) > 1), None)
+        if jump_index is not None:
+            parsed_bodies_raw = {label: parsed_bodies_raw[label] for label in parsed_labels_raw[jump_index:]}
+
     parsed_bodies = {
         label: content
         for label, content in parsed_bodies_raw.items()
         if not (content.strip() in {"| Page", "Page", "|Page"})
         and not (label.isdigit() and int(label) == page_number and content.strip().startswith("| Page"))
         and not (label.isdigit() and int(label) >= 100)
-        and _is_probable_footnote_content(content)
     }
     parsed_labels = list(parsed_bodies.keys())
     parsed_ids = [int(label) for label in parsed_labels if label.isdigit()]
     checks["parsed_ids_count"] = len(parsed_ids)
 
-    if len(numbered_list_lines) >= 3 and len(footnote_candidate_lines) <= 1 and len(parsed_ids) == 0:
+    if len(numbered_list_lines) >= 3 and len(footnote_candidate_lines) <= 1:
         reasons.append("multi_line_numbered_list_prefix_pattern")
         checks["numbered_list_negative"] = True
         return _result(
@@ -464,7 +481,7 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]], *, page_numb
             checks=checks,
         )
 
-    if len(numbered_list_lines) >= 3 and line_size_median >= page_size_median * 0.95 and len(parsed_ids) == 0:
+    if len(numbered_list_lines) >= 3 and line_size_median >= page_size_median * 0.95:
         reasons.append("numbered_lines_are_body_sized")
         checks["body_sized_numbered_negative"] = True
         return _result(

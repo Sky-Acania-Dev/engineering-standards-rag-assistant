@@ -219,11 +219,11 @@ class PDFParserTests(unittest.TestCase):
         ]
         debug = _build_phase2_bottom_region_debug_for_page(_FakePage(chars), page_number=7)
         self.assertEqual("true_footnote_block", debug["classification"])
-        self.assertEqual(["2"], debug["parsed_body_labels"])
+        self.assertEqual(["2", "3", "10", "11"], debug["parsed_body_labels"])
         self.assertTrue(debug["checks"]["passes_true_footnote_check"])
-        self.assertEqual(["2"], [item["label"] for item in debug["detected_content"]])
+        self.assertEqual(["2", "3", "10", "11"], [item["label"] for item in debug["detected_content"]])
         self.assertEqual(
-            [2],
+            [2, 3, 10, 11],
             [item["anchor_number"] for item in debug["detected_footnotes"]],
         )
         self.assertTrue(
@@ -258,7 +258,7 @@ class PDFParserTests(unittest.TestCase):
         ]
         debug = _build_phase2_bottom_region_debug_for_page(_FakePage(chars), page_number=7)
         self.assertEqual("true_footnote_block", debug["classification"])
-        self.assertEqual(["2"], debug["parsed_body_labels"])
+        self.assertEqual(["2", "3"], debug["parsed_body_labels"])
 
     def test_phase2_accepts_single_superscripted_label_when_negatives_do_not_match(self) -> None:
         class _FakePage:
