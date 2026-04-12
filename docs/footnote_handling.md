@@ -144,6 +144,29 @@ This separation is important because it prevents section/chapter drift and text 
 
 ---
 
+## Current footnote marker/content schema status
+
+There are currently **no dedicated dataclasses** for footnote markers or footnote contents in the parser/chunking model.
+
+Current structures are dictionary-based debug payloads:
+
+- Phase 1 marker items (`detected_anchors[]`):
+  - `anchor_id`
+  - `bbox`
+  - `line_index`
+  - `nearby_anchor_text`
+  - `confidence`
+  - `flags` (`line_final`, `punctuation_adjacent`, `heading_like`)
+
+- Phase 2 content items (`detected_footnotes[]`):
+  - `anchor_number`
+  - `footnote_content_page`
+  - `footnote_content_detected`
+
+If Phase 3 needs stronger typing, introducing dedicated marker/content dataclasses (or `TypedDict`s) is recommended before linking and integration.
+
+---
+
 ## Test coverage currently present (Phase 1–2)
 
 `tests/unit/test_parsers_html_pdf.py` includes focused coverage for:
@@ -170,25 +193,32 @@ The requested Phase 3 should be implemented as a pure linkage layer using only P
 
 ### Planned implementation steps
 
-1. **Create page-indexed maps from existing debug outputs**
-   - anchors by page/id from Phase 1 (`detected_anchors`).
-   - bodies by page/id from Phase 2 where classification is `true_footnote_block`.
+1. **Create id-indexed maps from existing debug outputs (no text/tag mutation)**
+   - markers by `anchor_id` from Phase 1 (`detected_anchors`), retaining full marker records and pages.
+   - footnote contents by label id from Phase 2 where classification is `true_footnote_block`.
+   - **Do not inject** inline tags such as `[fn:N]` in this step.
 
-2. **Add exact page-local linking function**
-   - for each page `P`, link anchor id `N` only to body id `N` on page `P`.
+2. **Link by id equality only (allow many markers → one content)**
+   - link markers and footnote contents whenever `anchor_id == content_label_id`.
+   - if multiple markers share the same id, all may link to one footnote content record.
    - no relative-order shifting and no nearest-neighbor reassignment.
 
-3. **Emit explicit dropped-anchor reasons**
-   - `no_true_footnote_block_on_page`
-   - `body_id_missing_on_same_page`
-   - `duplicate_anchor_id_same_page` (if needed)
+3. **Emit grouped linkage + explicit orphan debugging outputs**
+   - return a **linked footnote content list**, where each footnote content item includes:
+     - footnote id
+     - footnote text/content
+     - footnote content page/source
+     - list of linked marker records
+   - return **orphan marker list** (markers with no content id match).
+   - return **orphan footnote content list** (content entries with no linked markers).
 
 4. **Add phase-3 debug API**
    - e.g., `extract_phase3_linking_debug(pdf_path)` returning per-page:
-     - `anchor_ids`
-     - `body_ids`
-     - `resolved_links`
-     - `dropped_anchors`
+     - marker ids
+     - content ids
+     - linked footnote contents (with linked marker lists)
+     - orphan markers
+     - orphan contents
 
 5. **Keep extraction/chunk code untouched**
    - no marker insertion, no stripping, no metadata emission yet.
@@ -197,6 +227,7 @@ The requested Phase 3 should be implemented as a pure linkage layer using only P
 
 - page 5 anchor `1` links to body `1`.
 - page 7 mapping for `2/3/4/5` remains stable (no id shifts).
+- repeated markers with the same id can all link to one content record.
 - no accidental `6`→`7` merge.
 - id `24` link does not alter numeric prose/citations (e.g., `21.62`).
 
@@ -204,7 +235,7 @@ The requested Phase 3 should be implemented as a pure linkage layer using only P
 
 - no chunk text edits,
 - no footnote metadata in final chunks,
-- no fallback linking across pages.
+- no inline marker insertion (e.g., no `[fn:N]` yet).
 
 ---
 
