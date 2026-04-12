@@ -404,6 +404,42 @@ class PDFParserTests(unittest.TestCase):
         self.assertEqual(["6"], debug["parsed_body_labels"])
         self.assertEqual(["6"], debug["starting_label_candidates"])
 
+    def test_phase2_does_not_force_numbered_list_when_small_label_only_footnote_exists(self) -> None:
+        class _FakePage:
+            def __init__(self, chars: list[dict[str, object]], *, height: float = 240) -> None:
+                self.chars = chars
+                self.height = height
+
+            def extract_tables(self) -> list[list[list[str]]]:
+                return []
+
+        chars = [
+            # Body-sized numbered list
+            {"text": "1", "x0": 10, "x1": 14, "top": 170, "bottom": 182, "doctop": 170, "size": 12},
+            {"text": ".", "x0": 14, "x1": 16, "top": 170, "bottom": 182, "doctop": 170, "size": 12},
+            {"text": " ", "x0": 16, "x1": 18, "top": 170, "bottom": 182, "doctop": 170, "size": 12},
+            {"text": "A", "x0": 18, "x1": 22, "top": 170, "bottom": 182, "doctop": 170, "size": 12},
+            {"text": "2", "x0": 10, "x1": 14, "top": 184, "bottom": 196, "doctop": 184, "size": 12},
+            {"text": ".", "x0": 14, "x1": 16, "top": 184, "bottom": 196, "doctop": 184, "size": 12},
+            {"text": " ", "x0": 16, "x1": 18, "top": 184, "bottom": 196, "doctop": 184, "size": 12},
+            {"text": "B", "x0": 18, "x1": 22, "top": 184, "bottom": 196, "doctop": 184, "size": 12},
+            {"text": "3", "x0": 10, "x1": 14, "top": 198, "bottom": 210, "doctop": 198, "size": 12},
+            {"text": ".", "x0": 14, "x1": 16, "top": 198, "bottom": 210, "doctop": 198, "size": 12},
+            {"text": " ", "x0": 16, "x1": 18, "top": 198, "bottom": 210, "doctop": 198, "size": 12},
+            {"text": "C", "x0": 18, "x1": 22, "top": 198, "bottom": 210, "doctop": 198, "size": 12},
+            # Small label-only footnote starter + wrapped continuation
+            {"text": "1", "x0": 10, "x1": 12, "top": 216, "bottom": 222, "doctop": 216, "size": 7},
+            {"text": "2", "x0": 12, "x1": 14, "top": 216, "bottom": 222, "doctop": 216, "size": 7},
+            {"text": " ", "x0": 14, "x1": 16, "top": 220, "bottom": 228, "doctop": 220, "size": 9},
+            {"text": "h", "x0": 16, "x1": 20, "top": 220, "bottom": 228, "doctop": 220, "size": 9},
+            {"text": "t", "x0": 20, "x1": 24, "top": 220, "bottom": 228, "doctop": 220, "size": 9},
+            {"text": "t", "x0": 24, "x1": 28, "top": 220, "bottom": 228, "doctop": 220, "size": 9},
+            {"text": "p", "x0": 28, "x1": 32, "top": 220, "bottom": 228, "doctop": 220, "size": 9},
+        ]
+        debug = _build_phase2_bottom_region_debug_for_page(_FakePage(chars), page_number=22)
+        self.assertEqual("true_footnote_block", debug["classification"])
+        self.assertEqual(["12"], debug["parsed_body_labels"])
+
     def test_phase2_classifies_ordinary_numbered_list_as_non_footnote(self) -> None:
         class _FakePage:
             def __init__(self, chars: list[dict[str, object]], *, height: float = 200) -> None:

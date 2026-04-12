@@ -414,6 +414,7 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]], *, page_numb
         "table_negative": False,
         "numbered_list_negative": False,
         "body_sized_numbered_negative": False,
+        "label_only_small_candidate": False,
         "parsed_ids_count": 0,
         "superscript_label_present": False,
         "small_text": False,
@@ -471,8 +472,17 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]], *, page_numb
     parsed_labels = list(parsed_bodies.keys())
     parsed_ids = [int(label) for label in parsed_labels if label.isdigit()]
     checks["parsed_ids_count"] = len(parsed_ids)
+    label_only_pattern = re.compile(r"^\s*(\d{1,3})(?:[.)])?\s*$")
+    label_only_small_candidate = any(
+        label_only_pattern.match(str(line["text"]))
+        and float(line.get("median_size", 0.0) or 0.0) > 0
+        and page_size_median > 0
+        and float(line.get("median_size", 0.0) or 0.0) <= page_size_median * 0.9
+        for line in footnote_candidate_lines
+    )
+    checks["label_only_small_candidate"] = label_only_small_candidate
 
-    if len(numbered_list_lines) >= 3 and len(footnote_candidate_lines) <= 1:
+    if len(numbered_list_lines) >= 3 and len(footnote_candidate_lines) <= 1 and not label_only_small_candidate:
         reasons.append("multi_line_numbered_list_prefix_pattern")
         checks["numbered_list_negative"] = True
         return _result(
@@ -484,7 +494,11 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]], *, page_numb
             starting_label_candidates=starting_label_candidates,
         )
 
-    if (len(numbered_list_lines) >= 3 or len(bullet_list_lines) >= 3) and line_size_median >= page_size_median * 0.95:
+    if (
+        (len(numbered_list_lines) >= 3 or len(bullet_list_lines) >= 3)
+        and line_size_median >= page_size_median * 0.95
+        and not label_only_small_candidate
+    ):
         reasons.append("numbered_lines_are_body_sized")
         checks["body_sized_numbered_negative"] = True
         return _result(
@@ -512,10 +526,18 @@ def _classify_bottom_region(page: Any, lines: list[dict[str, Any]], *, page_numb
         small_text = line_size_median > 0 and page_size_median > 0 and line_size_median <= page_size_median * 0.9
         superscript_labels: set[str] = set()
         for line in footnote_candidate_lines:
-            if not _line_starts_with_superscript_numeric_label(line):
-                continue
             label_match = re.match(r"^\s*(\d{1,3})(?:[.)])?(?:\s+\S.*)?\s*$", str(line["text"]))
-            if label_match:
+            if not label_match:
+                continue
+            if _line_starts_with_superscript_numeric_label(line):
+                superscript_labels.add(label_match.group(1))
+                continue
+            if (
+                label_only_pattern.match(str(line["text"]))
+                and float(line.get("median_size", 0.0) or 0.0) > 0
+                and page_size_median > 0
+                and float(line.get("median_size", 0.0) or 0.0) <= page_size_median * 0.9
+            ):
                 superscript_labels.add(label_match.group(1))
         superscript_label_present = bool(superscript_labels)
         if superscript_labels:
