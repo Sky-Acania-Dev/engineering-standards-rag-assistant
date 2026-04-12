@@ -210,7 +210,7 @@ The requested Phase 3 should be implemented as a pure linkage layer using only P
      - footnote content page/source
      - list of linked marker records
    - return **orphan marker list** (markers with no content id match).
-   - return **orphan footnote content list** (content entries with no linked markers).
+   - do not return a separate orphan-content list; entries in the full footnote content list with empty linked marker arrays are implicit orphan contents.
 
 4. **Add phase-3 debug API**
    - e.g., `extract_phase3_linking_debug(pdf_path)` returning per-page:
@@ -218,7 +218,7 @@ The requested Phase 3 should be implemented as a pure linkage layer using only P
      - content ids
      - linked footnote contents (with linked marker lists)
      - orphan markers
-     - orphan contents
+     - (no separate orphan-content list; infer from empty linked-marker arrays)
 
 5. **Keep extraction/chunk code untouched**
    - no marker insertion, no stripping, no metadata emission yet.
