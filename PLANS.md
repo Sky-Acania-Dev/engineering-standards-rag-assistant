@@ -283,3 +283,50 @@ A strong version of this project:
 - Evaluation > Hype  
 - Constraints > Autonomy  
 - Correctness > Fluency  
+
+---
+
+## Footnote System — Phase 4 Pre-Coding Plan
+
+### Goal
+Integrate validated footnote links into chunking with conservative, non-destructive behavior.
+
+### Pre-coding checks
+1. Confirm Phase 1/2/3 debug outputs are available from parser-level functions:
+   - `extract_phase1_superscript_anchor_debug`
+   - `extract_phase2_page_bottom_debug`
+   - `extract_phase3_linking_debug`
+2. Confirm chunk builder entrypoints and metadata schema used by ingestion/chunking.
+3. Confirm current table extraction path so table text is not duplicated inline.
+4. Confirm no existing inline marker injector that could conflict with `[footnote: N]` insertion.
+
+### Implementation sequence (Phase 4)
+1. Build a **page-level integration artifact** from Phase 3:
+   - resolved anchors by page/line location
+   - resolved footnote bodies keyed by id
+   - source-page reference for each body
+2. Add conservative body-text reconstruction step:
+   - strip only bottom-region lines for pages classified as `true_footnote_block`
+   - never strip `ordinary_numbered_list`, `table_region`, or `unknown` regions
+3. Insert inline markers during reconstruction:
+   - insert `[footnote: N]` only when an anchor has a resolved Phase 3 link
+   - avoid numeric corruption around citations/decimals (e.g., `10 TAC 21.62`)
+4. Emit chunk-level footnote metadata:
+   - include only resolved footnotes (id, content, content_source_page, anchor_context)
+   - do not emit unlinked fallback metadata unless body came from validated `true_footnote_block`
+5. Preserve table behavior:
+   - if table emitted as table chunk, exclude duplicate table text from body chunk
+
+### Tests to implement before broad refactor
+1. Title-anchor and punctuation-adjacent marker insertion scenarios.
+2. `ordinary_numbered_list` classified pages do not emit footnote metadata.
+3. `table_region` classified pages do not emit footnote metadata.
+4. Two-digit ids (10/11/14/24) link correctly without splitting.
+5. Page 7 mapping remains stable for 2/3/4/5 with no id-shifting.
+6. Body + table chunk dedup guard (no repeated table text).
+7. Citation-safe text preservation (`§2306.51`, `10 TAC 21.62`).
+
+### Rollout guardrails
+- Prefer omission over false-positive footnote extraction.
+- Stop after implementing Phase 4 integration path and run focused parser/chunking tests.
+- Keep debug artifacts available for failed-link and dropped-anchor analysis.
