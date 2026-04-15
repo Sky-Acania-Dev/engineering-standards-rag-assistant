@@ -10,6 +10,7 @@ from app.ingestion.parsers.pdf import (
     _build_anchor_debug_for_page,
     _build_phase2_bottom_region_debug_for_page,
     _build_phase3_linking_debug,
+    _build_phase4_page_integration_artifact,
     parse_pdf_file,
 )
 
@@ -546,6 +547,58 @@ class PDFParserTests(unittest.TestCase):
         self.assertEqual([{"anchor_page": 4, "anchor_id": "88"}], debug["orphan_markers"])
         self.assertEqual("88", debug["pages"][0]["dropped_anchors"][0]["anchor_id"])
         self.assertEqual("3", debug["orphan_content_pool"][0]["content_id"])
+
+    def test_phase4_step1_builds_page_line_anchor_artifact_from_phase3(self) -> None:
+        phase1 = [
+            {
+                "page": 7,
+                "detected_anchors": [
+                    {"anchor_id": "2", "line_index": 3, "bbox": {"x0": 10}, "nearby_anchor_text": "line A"},
+                    {"anchor_id": "5", "line_index": 8, "bbox": {"x0": 20}, "nearby_anchor_text": "line B"},
+                ],
+            },
+            {
+                "page": 8,
+                "detected_anchors": [
+                    {"anchor_id": "2", "line_index": 1, "bbox": {"x0": 30}, "nearby_anchor_text": "cross page"},
+                ],
+            },
+        ]
+        phase2 = [
+            {"page": 7, "classification": "true_footnote_block", "parsed_bodies": {"2": "body two", "5": "body five"}}
+        ]
+
+        phase3 = _build_phase3_linking_debug(phase1, phase2)
+        artifact = _build_phase4_page_integration_artifact(phase3)
+
+        self.assertEqual(3, artifact["total_resolved_anchor_count"])
+        pages = {item["page"]: item for item in artifact["pages"]}
+        self.assertEqual({7, 8}, set(pages.keys()))
+        self.assertEqual(2, pages[7]["resolved_anchor_count"])
+        self.assertEqual(1, pages[8]["resolved_anchor_count"])
+
+        page7_line_indexes = [entry["line_index"] for entry in pages[7]["anchors_by_line"]]
+        self.assertEqual([3, 8], page7_line_indexes)
+        first_page7_anchor = pages[7]["anchors_by_line"][0]["anchors"][0]
+        self.assertEqual("2", first_page7_anchor["anchor_id"])
+        self.assertEqual(7, first_page7_anchor["resolved_content"]["footnote_content_page"])
+        self.assertEqual("body two", first_page7_anchor["resolved_content"]["footnote_content_detected"])
+
+        page8_anchor = pages[8]["resolved_anchors"][0]
+        self.assertEqual("2", page8_anchor["anchor_id"])
+        self.assertEqual(8, page8_anchor["anchor_page"])
+        self.assertEqual(7, page8_anchor["resolved_content"]["footnote_content_page"])
+
+    def test_phase4_step1_ignores_unresolved_phase3_anchors(self) -> None:
+        phase1 = [
+            {"page": 4, "detected_anchors": [{"anchor_id": "88", "line_index": 0, "bbox": {}, "nearby_anchor_text": "orphan"}]}
+        ]
+        phase2 = [{"page": 4, "classification": "true_footnote_block", "parsed_bodies": {"3": "unlinked body"}}]
+        phase3 = _build_phase3_linking_debug(phase1, phase2)
+
+        artifact = _build_phase4_page_integration_artifact(phase3)
+        self.assertEqual([], artifact["pages"])
+        self.assertEqual(0, artifact["total_resolved_anchor_count"])
 
     def test_parse_pdf_file_uses_pdfplumber_primary_extraction(self) -> None:
         class _FakePage:

@@ -835,6 +835,86 @@ def extract_phase3_linking_debug(pdf_path: str | Path) -> dict[str, Any]:
     return _build_phase3_linking_debug(phase1, phase2)
 
 
+def _build_phase4_page_integration_artifact(
+    phase3_linking_debug: dict[str, Any],
+) -> dict[str, Any]:
+    """Phase 4 step 1 artifact: group resolved anchors by page/line location."""
+    linked_contents = list(phase3_linking_debug.get("linked_footnote_contents", []) or [])
+
+    page_line_map: dict[int, dict[int | None, list[dict[str, Any]]]] = {}
+    for content in linked_contents:
+        content_id = str(content.get("content_id", ""))
+        content_page = int(content.get("footnote_content_page", 0) or 0)
+        content_text = str(content.get("footnote_content_detected", ""))
+        markers = list(content.get("linked_markers", []) or [])
+        for marker in markers:
+            anchor_page = int(marker.get("anchor_page", 0) or 0)
+            anchor_id = str(marker.get("anchor_id", ""))
+            raw_line_index = marker.get("line_index")
+            line_index: int | None
+            if isinstance(raw_line_index, int):
+                line_index = raw_line_index
+            elif isinstance(raw_line_index, str) and raw_line_index.isdigit():
+                line_index = int(raw_line_index)
+            else:
+                line_index = None
+
+            anchor_record = {
+                "anchor_id": anchor_id,
+                "anchor_page": anchor_page,
+                "line_index": line_index,
+                "bbox": marker.get("bbox"),
+                "nearby_anchor_text": marker.get("nearby_anchor_text"),
+                "resolved_content": {
+                    "content_id": content_id,
+                    "footnote_content_page": content_page,
+                    "footnote_content_detected": content_text,
+                },
+            }
+            page_line_map.setdefault(anchor_page, {}).setdefault(line_index, []).append(anchor_record)
+
+    pages: list[dict[str, Any]] = []
+    for page_number in sorted(page_line_map.keys()):
+        line_groups = page_line_map[page_number]
+        anchors_by_line: list[dict[str, Any]] = []
+        resolved_anchors: list[dict[str, Any]] = []
+        sorted_line_indexes = sorted(line_groups.keys(), key=lambda value: (value is None, value if value is not None else -1))
+        for line_index in sorted_line_indexes:
+            records = sorted(
+                line_groups[line_index],
+                key=lambda item: (
+                    int(item["anchor_id"]) if str(item["anchor_id"]).isdigit() else str(item["anchor_id"]),
+                    str(item.get("nearby_anchor_text", "")),
+                ),
+            )
+            anchors_by_line.append(
+                {
+                    "line_index": line_index,
+                    "anchors": records,
+                }
+            )
+            resolved_anchors.extend(records)
+        pages.append(
+            {
+                "page": page_number,
+                "resolved_anchor_count": len(resolved_anchors),
+                "resolved_anchors": resolved_anchors,
+                "anchors_by_line": anchors_by_line,
+            }
+        )
+
+    return {
+        "pages": pages,
+        "total_resolved_anchor_count": sum(int(page["resolved_anchor_count"]) for page in pages),
+    }
+
+
+def extract_phase4_page_integration_artifact_debug(pdf_path: str | Path) -> dict[str, Any]:
+    """Phase 4 debug helper (step 1): build resolved anchor page/line artifact from Phase 3 output."""
+    phase3 = extract_phase3_linking_debug(pdf_path)
+    return _build_phase4_page_integration_artifact(phase3)
+
+
 def _extract_structured_page_text_pypdf(page: Any, page_number: int) -> str:
     text = (page.extract_text() or "").strip()
     lines = [f"## Page {page_number}"]
